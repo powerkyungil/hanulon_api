@@ -154,8 +154,8 @@ describe('boss definition and schedule routes', () => {
     const owner = await createGuild(app, '일정 저장 길드', 'scheduleowner');
     const member = await joinGuild(app, owner.guildId, 'MEMBER', 'schedulemember');
 
-    const denied = await saveSchedule(app, member.token);
-    expect(denied.statusCode).toBe(403);
+    const memberSaved = await saveSchedule(app, member.token);
+    expect(memberSaved.statusCode).toBe(200);
     expect((await saveSchedule(app, owner.token)).statusCode).toBe(200);
     expect((await saveSchedule(app, owner.token)).statusCode).toBe(200);
 
@@ -271,12 +271,13 @@ describe('boss definition and schedule routes', () => {
   it('calculates cut from server time and mung from the verified current occurrence', async () => {
     const app = await createApp();
     const owner = await createGuild(app, '컷 멍 길드', 'actionowner');
-    expect((await saveSchedule(app, owner.token)).statusCode).toBe(200);
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'actionmember');
+    expect((await saveSchedule(app, member.token)).statusCode).toBe(200);
 
     const mung = await app.inject({
       method: 'POST',
       url: '/api/schedules/mung',
-      headers: auth(owner.token),
+      headers: auth(member.token),
       payload: {
         type: scheduleInput.type,
         region: scheduleInput.region,
@@ -293,7 +294,7 @@ describe('boss definition and schedule routes', () => {
     const staleMung = await app.inject({
       method: 'POST',
       url: '/api/schedules/mung',
-      headers: auth(owner.token),
+      headers: auth(member.token),
       payload: {
         type: scheduleInput.type,
         region: scheduleInput.region,
@@ -308,7 +309,7 @@ describe('boss definition and schedule routes', () => {
     const cut = await app.inject({
       method: 'POST',
       url: '/api/v1/schedules/cut',
-      headers: auth(owner.token),
+      headers: auth(member.token),
       payload: {
         type: scheduleInput.type,
         region: scheduleInput.region,
@@ -318,6 +319,27 @@ describe('boss definition and schedule routes', () => {
     const nextSpawnTime = (cut.json() as { data: { nextSpawnTime: number } }).data.nextSpawnTime;
     expect(nextSpawnTime).toBeGreaterThanOrEqual(beforeCut + 12 * 3_600_000);
     expect(nextSpawnTime).toBeLessThanOrEqual(Date.now() + 12 * 3_600_000);
+
+    const schedules = await app.inject({
+      method: 'GET',
+      url: '/api/schedules',
+      headers: auth(member.token),
+    });
+    const scheduleId = (schedules.json() as Array<{ id: number }>)[0]?.id;
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/schedules/${scheduleId}`,
+      headers: auth(member.token),
+    });
+    expect(deleted.statusCode).toBe(200);
+
+    expect((await saveSchedule(app, member.token)).statusCode).toBe(200);
+    const deniedReset = await app.inject({
+      method: 'DELETE',
+      url: '/api/schedules-all',
+      headers: auth(member.token),
+    });
+    expect(deniedReset.statusCode).toBe(403);
   });
 
   it('manages participation targets and toggles occurrence participation without cross-guild leaks', async () => {

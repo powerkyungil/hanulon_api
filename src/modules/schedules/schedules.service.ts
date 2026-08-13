@@ -28,7 +28,7 @@ export class SchedulesService {
   }
 
   public saveSchedules(userId: number, guildId: number, inputs: ScheduleInput[]): void {
-    const actor = this.requireManager(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId);
     if (inputs.length === 0) {
       throw new AppError('SCHEDULE_LIST_EMPTY', '등록할 일정을 하나 이상 전달해 주세요.', 422);
     }
@@ -41,7 +41,7 @@ export class SchedulesService {
   }
 
   public cut(userId: number, guildId: number, key: Omit<ScheduleInput, 'spawnTime'>): number {
-    const actor = this.requireManager(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId);
     const definition = this.requireCooldownDefinition(guildId, key);
     const spawnTime = Date.now() + Math.round(definition.cooldownHours * 3_600_000);
     this.repository.replaceForAction(
@@ -54,7 +54,7 @@ export class SchedulesService {
   }
 
   public mung(userId: number, guildId: number, input: ScheduleInput): number {
-    const actor = this.requireManager(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId);
     this.validateInput(input);
     const definition = this.requireCooldownDefinition(guildId, input);
     const current = this.repository.findByDefinition(guildId, definition.id);
@@ -76,7 +76,7 @@ export class SchedulesService {
   }
 
   public deleteSchedule(userId: number, guildId: number, scheduleId: number): void {
-    const actor = this.requireManager(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId);
     const schedule = this.repository.findById(guildId, scheduleId);
     if (!schedule) throw new AppError('SCHEDULE_NOT_FOUND', '보스 일정을 찾을 수 없습니다.', 404);
     this.repository.delete(actor, schedule);
