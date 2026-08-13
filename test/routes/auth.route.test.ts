@@ -274,6 +274,7 @@ describe('auth routes', () => {
     });
     expect(invalidLogin.statusCode).toBe(401);
     expect(invalidLogin.json()).toMatchObject({
+      error: '아이디 또는 비밀번호가 올바르지 않습니다.',
       code: 'INVALID_CREDENTIALS',
       message: '아이디 또는 비밀번호가 올바르지 않습니다.',
     });

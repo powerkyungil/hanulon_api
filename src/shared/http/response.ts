@@ -20,6 +20,7 @@ export const legacyFailure = (
   requestId: string,
   details: Record<string, unknown> | null = null,
 ) => ({
+  error: message,
   code,
   message,
   details,

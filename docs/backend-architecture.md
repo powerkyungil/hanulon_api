@@ -263,6 +263,8 @@ modules/schedules/
 
 내부 stack trace와 secret은 응답하지 않는다. 실제 오류는 requestId로 로그에서 추적한다.
 
+기존 웹의 compatibility route는 전환 기간에 `code`, `message`, `details`, `requestId`와 함께 기존 화면이 읽는 `error` 문자열을 같은 메시지로 반환한다.
+
 ### 7.4 초기 route 영역
 
 ```text
@@ -615,7 +617,7 @@ Flutter 이미지 선택
 - PM2를 사용한다면 `fork` 모드만 사용하고 cluster mode는 사용하지 않는다.
 - Docker는 초기 운영에서 사용하지 않는다. 이미지와 daemon 오버헤드가 필요하지 않기 때문이다.
 - Nginx 또는 Naver Cloud HTTPS 계층에서 TLS를 종료하고 Fastify는 내부 포트에서 대기한다.
-- 기존 웹 전환 기간에는 정적 웹과 제외 기능을 기존 3000 포트에서 유지하고, `hanulbear.online/api/...`는 Nginx가 Fastify 3001 포트로 전달한다. 범위에서 제외된 `/api/janken/...`과 `/api/test-discord`만 기존 서버로 전달한다.
+- 기존 웹 전환 기간에는 정적 웹과 제외 기능을 기존 3000 포트에서 유지하고, `api.hanul-on.cloud/api/...`는 Nginx가 Fastify 3001 포트로 전달한다. 범위에서 제외된 `/api/janken/...`과 `/api/test-discord`만 기존 서버로 전달한다.
 - `/api/v1/health/live`는 프로세스 생존만 확인한다.
 - `/api/v1/health/ready`는 DB 연결과 migration 상태까지 확인한다.
 - `SIGTERM` 수신 시 신규 요청을 받지 않고 요청·DB 작업을 정리한 뒤 종료한다.
