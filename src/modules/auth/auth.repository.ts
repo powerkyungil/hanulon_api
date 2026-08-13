@@ -30,6 +30,21 @@ export interface NewUserInput {
 export class AuthRepository {
   public constructor(private readonly db: Database.Database) {}
 
+  public findUserById(id: number): AuthUser | null {
+    const row = this.db
+      .prepare(
+        `
+          SELECT id, guild_id, username, password_hash, role, nickname, is_active
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+        `,
+      )
+      .get(id) as UserRow | undefined;
+
+    return row ? this.mapUser(row) : null;
+  }
+
   public findUserByUsername(username: string): AuthUser | null {
     const row = this.db
       .prepare(
@@ -42,8 +57,10 @@ export class AuthRepository {
       )
       .get(username) as UserRow | undefined;
 
-    if (!row) return null;
+    return row ? this.mapUser(row) : null;
+  }
 
+  private mapUser(row: UserRow): AuthUser {
     return {
       id: row.id,
       guildId: row.guild_id,

@@ -317,5 +317,7 @@ export const registerCollectionRoutes = async (app: FastifyInstance): Promise<vo
 
   registerDefinitionRoutes('/api/v2/collections', 'legacy');
   registerCompletionRoutes('/api/v2/user-collections', '/api/v2/user-collections/toggle', 'legacy');
+  registerDefinitionRoutes('/api/collections', 'legacy');
+  registerCompletionRoutes('/api/user-collections', '/api/user-collections/toggle', 'legacy');
   registerExclusionRoutes('/api/excluded-members', '/api/excluded-members/toggle', 'legacy');
 };

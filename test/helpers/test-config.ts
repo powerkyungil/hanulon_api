@@ -8,6 +8,7 @@ export const createTestConfig = (): AppConfig => ({
   host: '127.0.0.1',
   port: 0,
   jwtSecret: 'test-secret-that-is-long-enough-for-jwt',
+  jwtPreviousSecret: '',
   databasePath: path.join(
     os.tmpdir(),
     `odin-guild-api-test-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
@@ -15,4 +16,7 @@ export const createTestConfig = (): AppConfig => ({
   corsOrigins: [],
   logLevel: 'silent',
   bossHistoryRetentionDays: 90,
+  ocrInvokeUrl: '',
+  ocrSecret: '',
+  ocrTemplates: [],
 });

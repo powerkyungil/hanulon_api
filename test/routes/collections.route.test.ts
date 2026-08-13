@@ -143,6 +143,14 @@ describe('collection definition routes', () => {
       },
     ]);
 
+    const oldLegacyList = await app.inject({
+      method: 'GET',
+      url: '/api/collections',
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+    expect(oldLegacyList.statusCode).toBe(200);
+    expect(oldLegacyList.json()).toEqual(list.json());
+
     const v1List = await app.inject({
       method: 'GET',
       url: '/api/v1/collections',
@@ -212,6 +220,13 @@ describe('collection definition routes', () => {
       headers: { authorization: `Bearer ${owner.token}` },
     });
     expect(preserved.json()).toEqual([{ user_id: owner.userId, collection_item_id: firstId }]);
+
+    const oldLegacyCompletions = await app.inject({
+      method: 'GET',
+      url: '/api/user-collections',
+      headers: { authorization: `Bearer ${owner.token}` },
+    });
+    expect(oldLegacyCompletions.json()).toEqual(preserved.json());
 
     const removeCompletedItem = await app.inject({
       method: 'PUT',

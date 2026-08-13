@@ -15,6 +15,7 @@ import { registerGuildRoutes } from './modules/guild/guild.route';
 import { registerHealthRoutes } from './modules/health/health.route';
 import { registerMemberRoutes } from './modules/members/members.route';
 import { registerNoticeRoutes } from './modules/notices/notices.route';
+import { registerOcrRoutes } from './modules/ocr/ocr.route';
 import { registerScheduleRoutes } from './modules/schedules/schedules.route';
 import { registerSiegeRoutes } from './modules/siege/siege.route';
 import { registerSupportRoutes } from './modules/support/support.route';
@@ -58,6 +59,7 @@ export const buildApp = async (
   await registerGuildRoutes(app);
   await registerMemberRoutes(app);
   await registerNoticeRoutes(app);
+  await registerOcrRoutes(app, config);
   await registerScheduleRoutes(app, config.bossHistoryRetentionDays);
   await registerSiegeRoutes(app);
   await registerSupportRoutes(app);

@@ -23,5 +23,12 @@ describe('system routes', () => {
     expect(body.data.timeZone).toBe('Asia/Seoul');
     expect(body.data.epochMs).toBeGreaterThanOrEqual(before);
     expect(body.data.epochMs).toBeLessThanOrEqual(after);
+
+    const legacyResponse = await app.inject({ method: 'GET', url: '/api/time' });
+    expect(legacyResponse.statusCode).toBe(200);
+    expect(legacyResponse.json()).toMatchObject({
+      serverTime: expect.any(Number),
+      timeZone: 'Asia/Seoul',
+    });
   });
 });

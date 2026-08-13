@@ -305,4 +305,119 @@ describe('boss vote routes', () => {
     });
     expect(list.json()).toEqual([]);
   }, 15_000);
+
+  it('supports legacy close, participant removal, monthly stats, and member rates', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, '투표 관리 길드', 'managevoteowner');
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'managevotemember');
+    const spawnTime = seoulDayStart() + 14 * 3_600_000;
+    const created = await createManualVote(app, owner.token, spawnTime);
+    const manualId = (created.json() as { id: number }).id;
+    const voteKey = `manual|${manualId}`;
+    const encodedVoteKey = encodeURIComponent(voteKey);
+
+    const joined = await app.inject({
+      method: 'POST',
+      url: `/api/vote-participants/${encodedVoteKey}`,
+      headers: auth(member.token),
+      payload: { boss: '수동 보스', spawnTime },
+    });
+    expect(joined.statusCode).toBe(200);
+
+    const seoulDate = new Date(spawnTime + 9 * 3_600_000).toISOString().slice(0, 10);
+    const month = seoulDate.slice(0, 7);
+    const stats = await app.inject({
+      method: 'GET',
+      url: `/api/vote-stats?month=${month}`,
+      headers: auth(owner.token),
+    });
+    expect(stats.statusCode).toBe(200);
+    expect(stats.json()).toMatchObject({
+      month,
+      totalBosses: 1,
+      totalParticipants: 1,
+      days: [
+        {
+          date: seoulDate,
+          totalParticipants: 1,
+          bosses: [
+            {
+              voteKey,
+              participantCount: 1,
+              participants: [{ userId: member.userId, nickname: 'managevotemember' }],
+            },
+          ],
+        },
+      ],
+    });
+
+    const rates = await app.inject({
+      method: 'GET',
+      url: `/api/vote-member-rates?start=${seoulDate}&end=${seoulDate}`,
+      headers: auth(owner.token),
+    });
+    expect(rates.statusCode).toBe(200);
+    expect(rates.json()).toMatchObject({
+      start: seoulDate,
+      end: seoulDate,
+      totalBosses: 1,
+      memberCount: 2,
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          userId: member.userId,
+          joinedCount: 1,
+          totalBosses: 1,
+          rate: 100,
+        }),
+      ]),
+    });
+
+    const memberDenied = await app.inject({
+      method: 'DELETE',
+      url: `/api/vote-participants/${encodedVoteKey}/users/${member.userId}`,
+      headers: auth(member.token),
+    });
+    expect(memberDenied.statusCode).toBe(403);
+
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/api/vote-participants/${encodedVoteKey}/users/${member.userId}`,
+      headers: auth(owner.token),
+    });
+    expect(removed.json()).toEqual({ success: true });
+
+    const closed = await app.inject({
+      method: 'DELETE',
+      url: `/api/vote-bosses/${encodedVoteKey}`,
+      headers: auth(owner.token),
+      payload: { boss: '수동 보스', spawnTime },
+    });
+    expect(closed.json()).toEqual({ success: true, state: 'INACTIVE' });
+
+    const legacyList = await app.inject({
+      method: 'GET',
+      url: '/api/vote-bosses',
+      headers: auth(owner.token),
+    });
+    expect(legacyList.json()).toEqual([]);
+
+    const v1List = await app.inject({
+      method: 'GET',
+      url: '/api/v1/boss-votes',
+      headers: auth(owner.token),
+    });
+    expect(v1List.json()).toMatchObject({
+      data: [{ voteKey, isClosed: true, participantCount: 0 }],
+    });
+
+    const hardDeleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/vote-bosses/manual/${manualId}`,
+      headers: auth(owner.token),
+    });
+    expect(hardDeleted.json()).toEqual({ success: true });
+    expect(
+      app.db.prepare('SELECT 1 FROM manual_boss_votes WHERE id = ?').get(manualId),
+    ).toBeUndefined();
+  }, 15_000);
 });

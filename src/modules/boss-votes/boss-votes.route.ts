@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { API_PREFIX } from '../../config/constants';
@@ -12,14 +13,26 @@ import {
   legacyCreatedResponseSchema,
   legacyToggleResponseSchema,
   legacyVoteListResponseSchema,
+  legacyClosedResponseSchema,
+  legacySuccessResponseSchema,
+  manualVoteParamsSchema,
   manualVoteBodySchema,
   v1CreatedResponseSchema,
   v1ToggleResponseSchema,
   v1VoteListResponseSchema,
   voteParamsSchema,
+  voteCloseBodySchema,
+  voteMemberRatesQuerySchema,
+  voteParticipantParamsSchema,
+  voteStatsQuerySchema,
   voteToggleBodySchema,
+  type ManualVoteParams,
   type ManualVoteBody,
+  type VoteCloseBody,
+  type VoteMemberRatesQuery,
+  type VoteParticipantParams,
   type VoteParams,
+  type VoteStatsQuery,
   type VoteToggleBody,
 } from './boss-votes.schema';
 import { BossVotesService } from './boss-votes.service';
@@ -72,7 +85,7 @@ export const registerBossVoteRoutes = async (
       async (request, reply) => {
         const identity = identityFromRequest(request);
         const votes = service.getVotes(identity.userId, identity.guildId);
-        return reply.send(style === 'v1' ? success(votes) : votes);
+        return reply.send(style === 'v1' ? success(votes) : votes.filter((vote) => !vote.isClosed));
       },
     );
 
@@ -145,4 +158,127 @@ export const registerBossVoteRoutes = async (
     },
     'legacy',
   );
+
+  app.delete(
+    '/api/vote-bosses/manual/:id',
+    {
+      config: routeConfig('legacy'),
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['boss-votes'],
+        params: manualVoteParamsSchema,
+        response: { 200: legacySuccessResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = identityFromRequest(request);
+      service.deleteManualVote(
+        identity.userId,
+        identity.guildId,
+        (request.params as ManualVoteParams).id,
+      );
+      return reply.send({ success: true });
+    },
+  );
+
+  app.delete(
+    '/api/vote-bosses/:voteKey',
+    {
+      config: routeConfig('legacy'),
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['boss-votes'],
+        params: voteParamsSchema,
+        body: voteCloseBodySchema,
+        response: { 200: legacyClosedResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = identityFromRequest(request);
+      const params = request.params as VoteParams;
+      const body = request.body as VoteCloseBody;
+      service.closeVote(
+        identity.userId,
+        identity.guildId,
+        params.voteKey,
+        body.boss,
+        body.spawnTime,
+      );
+      return reply.send({ success: true, state: 'INACTIVE' as const });
+    },
+  );
+
+  app.delete(
+    '/api/vote-participants/:voteKey/users/:userId',
+    {
+      config: routeConfig('legacy'),
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['boss-votes'],
+        params: voteParticipantParamsSchema,
+        response: { 200: legacySuccessResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = identityFromRequest(request);
+      const params = request.params as VoteParticipantParams;
+      service.removeParticipant(identity.userId, identity.guildId, params.voteKey, params.userId);
+      return reply.send({ success: true });
+    },
+  );
+
+  const registerStatisticsRoute = (url: string, style: ResponseStyle): void => {
+    app.get(
+      url,
+      {
+        config: routeConfig(style),
+        preHandler: app.authenticate,
+        schema: {
+          tags: ['boss-votes'],
+          querystring: voteStatsQuerySchema,
+          response: { 200: Type.Any() },
+        },
+      },
+      async (request, reply) => {
+        const identity = identityFromRequest(request);
+        const result = service.getStatistics(
+          identity.userId,
+          identity.guildId,
+          (request.query as VoteStatsQuery).month,
+        );
+        return reply.send(style === 'v1' ? success(result) : result);
+      },
+    );
+  };
+
+  const registerMemberRatesRoute = (url: string, style: ResponseStyle): void => {
+    app.get(
+      url,
+      {
+        config: routeConfig(style),
+        preHandler: app.authenticate,
+        schema: {
+          tags: ['boss-votes'],
+          querystring: voteMemberRatesQuerySchema,
+          response: { 200: Type.Any() },
+        },
+      },
+      async (request, reply) => {
+        const identity = identityFromRequest(request);
+        const query = request.query as VoteMemberRatesQuery;
+        const result = service.getMemberRates(
+          identity.userId,
+          identity.guildId,
+          query.start,
+          query.end,
+        );
+        return reply.send(style === 'v1' ? success(result) : result);
+      },
+    );
+  };
+
+  registerStatisticsRoute(`${API_PREFIX}/vote-stats`, 'v1');
+  registerStatisticsRoute('/api/vote-stats', 'legacy');
+  registerMemberRatesRoute(`${API_PREFIX}/vote-member-rates`, 'v1');
+  registerMemberRatesRoute('/api/vote-member-rates', 'legacy');
 };

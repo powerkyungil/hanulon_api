@@ -295,6 +295,7 @@ modules/schedules/
 /api/v1/boss-votes/manual
 /api/v1/boss-votes/:voteKey/participation
 /api/v1/vote-stats
+/api/v1/vote-member-rates
 /api/v1/notices/rules
 /api/v1/notices/rules/:id
 /api/v1/notices/rules/order
@@ -371,7 +372,9 @@ modules/schedules/
 - 참여자 닉네임은 참여 시점 스냅샷으로 저장하고 현재 로그인 사용자의 `joined`는 사용자 ID로 계산한다.
 - 수동 투표 등록과 참여 토글은 `boss_vote_audit_logs`에 기록하며 모든 조회·변경은 현재 `guildId`로 격리한다.
 - Flutter의 `/api/vote-bosses`, `/api/vote-bosses/manual`, `/api/vote-participants/:voteKey`는 compatibility route로 제공한다.
-- 마감·영구 삭제·참여자 수동 제외·기간 통계는 Flutter 계약 확정 전 백로그로 유지한다.
+- 운영진은 투표를 `INACTIVE`로 마감하고 참여자를 수동 제외할 수 있으며, 수동 투표는 명시적인 삭제 경로로 제거할 수 있다.
+- 월별 투표 참여 현황과 날짜 범위별 회원 참여율을 제공하고, 마감·삭제된 투표는 통계에서 제외한다.
+- 기존 웹의 `/api/vote-bosses/:voteKey`, `/api/vote-bosses/manual/:id`, `/api/vote-participants/:voteKey/users/:userId`, `/api/vote-stats`, `/api/vote-member-rates`는 compatibility route로 제공한다.
 
 공지·가격표·보스 통제 API는 다음 정책을 사용한다.
 
@@ -410,7 +413,7 @@ modules/schedules/
 - 컬렉션 이름·item 부위·강화 상태는 각각 최대 100자이며 컬렉션에는 item이 하나 이상 있어야 한다.
 - 보유 상태와 제외 대상은 같은 길드의 활성 사용자와 같은 길드의 item만 허용한다.
 - 모든 mutation은 `collection_audit_logs`에 기록한다.
-- Flutter의 `/api/v2/collections`, `/api/v2/user-collections`, `/api/excluded-members`는 compatibility route로 제공한다.
+- Flutter와 기존 웹의 `/api/v2/collections`, `/api/v2/user-collections`, `/api/collections`, `/api/user-collections`, `/api/excluded-members`는 compatibility route로 제공한다.
 
 콘텐츠 참여 그룹 API는 다음 정책을 사용한다.
 
@@ -447,6 +450,8 @@ modules/schedules/
 5. route 또는 service가 `MASTER`, `ADMIN`, `MEMBER` 정책을 최종 검사한다.
 
 현재는 access token 7일을 기본으로 하되, refresh token이 도입되면 만료 정책과 storage 정책을 이 문서에 갱신한다.
+
+운영 JWT 키 교체 시 `JWT_SECRET`은 신규 토큰 서명과 기본 검증에 사용하고, `JWT_PREVIOUS_SECRET`은 기존 토큰의 검증 전용으로 한시 운영한다. 이전 키는 access token 최대 수명 이후 제거한다.
 
 ### 8.2 권한 원칙
 
@@ -560,7 +565,7 @@ schedule_history / vote_history
 - 일정 투표는 별도 복사본을 만들지 않고 `boss_schedules`, `schedule_history`, 고정 `boss_definitions`에서 occurrence를 구성한다.
 - 일정 화면 참여와 투표 화면 참여는 동일한 `boss_participants`를 사용해 어느 화면에서 토글해도 상태가 일치한다.
 - `participation_states`의 `INACTIVE`, `DELETED` 상태는 투표 목록과 참여 mutation에 동일하게 적용한다.
-- `boss_vote_audit_logs`는 수동 투표 등록과 참여 토글의 행위자·voteKey를 보존한다.
+- `boss_vote_audit_logs`는 수동 투표 등록·삭제, 참여 토글·수동 제외, 투표 마감·삭제의 행위자와 voteKey를 보존한다.
 
 ### 9.11 migration 규칙
 
@@ -581,7 +586,7 @@ infrastructure/db/migrations/
 ```text
 Flutter 이미지 선택
   → POST /api/v1/ocr/boss-schedule
-  → Fastify body/multipart 검증
+  → Fastify raw image body 검증
   → CLOVA OCR client
   → 정규화된 OCR 결과 반환
   → 사용자가 검토
@@ -591,6 +596,7 @@ Flutter 이미지 선택
 - OCR 분석과 일정 저장을 한 transaction/endpoint로 묶지 않는다.
 - OCR 결과에는 확정된 DB id를 부여하지 않는다.
 - 템플릿 선택 권한과 사용 가능한 template 목록을 서버에서 제한한다.
+- 기존 웹의 `/api/ocr/templates`, `/api/ocr/boss-schedule`는 동일한 권한·크기 제한을 적용하는 compatibility route로 제공한다.
 - 외부 API timeout, 재시도 횟수, 원격 오류는 별도 error code로 변환한다.
 - 원본 이미지는 저장하지 않는다.
 
@@ -609,6 +615,7 @@ Flutter 이미지 선택
 - PM2를 사용한다면 `fork` 모드만 사용하고 cluster mode는 사용하지 않는다.
 - Docker는 초기 운영에서 사용하지 않는다. 이미지와 daemon 오버헤드가 필요하지 않기 때문이다.
 - Nginx 또는 Naver Cloud HTTPS 계층에서 TLS를 종료하고 Fastify는 내부 포트에서 대기한다.
+- 기존 웹 전환 기간에는 정적 웹과 제외 기능을 기존 3000 포트에서 유지하고, `hanulbear.online/api/...`는 Nginx가 Fastify 3001 포트로 전달한다. 범위에서 제외된 `/api/janken/...`과 `/api/test-discord`만 기존 서버로 전달한다.
 - `/api/v1/health/live`는 프로세스 생존만 확인한다.
 - `/api/v1/health/ready`는 DB 연결과 migration 상태까지 확인한다.
 - `SIGTERM` 수신 시 신규 요청을 받지 않고 요청·DB 작업을 정리한 뒤 종료한다.

@@ -2,7 +2,14 @@ import type Database from 'better-sqlite3';
 
 import { withTransaction } from '../../infrastructure/db/transaction';
 import type { UserRole } from '../auth/auth.types';
-import type { ManualVote, ManualVoteInput, VoteActor, VoteParticipant } from './boss-votes.types';
+import type {
+  ManualVote,
+  ManualVoteInput,
+  VoteActor,
+  VoteMember,
+  VoteParticipant,
+  VoteParticipantDetail,
+} from './boss-votes.types';
 
 interface ActorRow {
   id: number;
@@ -87,6 +94,91 @@ export class BossVotesRepository {
     });
   }
 
+  public findManualVote(guildId: number, id: number): ManualVote | null {
+    const row = this.db
+      .prepare(
+        `
+          SELECT id, type, region, boss, spawn_time, is_blessed
+          FROM manual_boss_votes
+          WHERE guild_id = ? AND id = ?
+        `,
+      )
+      .get(guildId, id) as ManualVoteRow | undefined;
+    return row
+      ? {
+          id: row.id,
+          type: row.type,
+          region: row.region,
+          boss: row.boss,
+          spawnTime: row.spawn_time,
+          isBlessed: row.is_blessed === 1,
+        }
+      : null;
+  }
+
+  public deleteManualVote(actor: VoteActor, vote: ManualVote): void {
+    withTransaction(this.db, () => {
+      const voteKey = `manual|${vote.id}`;
+      this.db
+        .prepare('DELETE FROM boss_participants WHERE guild_id = ? AND vote_key = ?')
+        .run(actor.guildId, voteKey);
+      this.db
+        .prepare('DELETE FROM participation_states WHERE guild_id = ? AND vote_key = ?')
+        .run(actor.guildId, voteKey);
+      this.db
+        .prepare('DELETE FROM manual_boss_votes WHERE guild_id = ? AND id = ?')
+        .run(actor.guildId, vote.id);
+      this.insertAudit(actor, voteKey, 'MANUAL_VOTE_DELETED', {
+        boss: vote.boss,
+        spawnTime: vote.spawnTime,
+      });
+    });
+  }
+
+  public setVoteState(
+    actor: VoteActor,
+    voteKey: string,
+    boss: string,
+    spawnTime: number,
+    state: 'INACTIVE' | 'DELETED',
+  ): void {
+    withTransaction(this.db, () => {
+      this.db
+        .prepare(
+          `
+            INSERT INTO participation_states (
+              guild_id, vote_key, spawn_time, state, updated_by, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(guild_id, vote_key) DO UPDATE SET
+              spawn_time = excluded.spawn_time,
+              state = excluded.state,
+              updated_by = excluded.updated_by,
+              updated_at = CURRENT_TIMESTAMP
+          `,
+        )
+        .run(actor.guildId, voteKey, spawnTime, state, actor.id);
+      this.insertAudit(actor, voteKey, state === 'INACTIVE' ? 'VOTE_CLOSED' : 'VOTE_DELETED', {
+        boss,
+        spawnTime,
+      });
+    });
+  }
+
+  public removeParticipant(actor: VoteActor, voteKey: string, userId: number): boolean {
+    return withTransaction(this.db, () => {
+      const removed = this.db
+        .prepare(
+          'DELETE FROM boss_participants WHERE guild_id = ? AND vote_key = ? AND user_id = ?',
+        )
+        .run(actor.guildId, voteKey, userId).changes;
+      if (removed > 0) {
+        this.insertAudit(actor, voteKey, 'PARTICIPANT_REMOVED', { userId });
+      }
+      return removed > 0;
+    });
+  }
+
   public findStates(
     guildId: number,
     voteKeys: string[],
@@ -102,6 +194,26 @@ export class BossVotesRepository {
         `,
       )
       .all(guildId, ...voteKeys) as Array<{
+      vote_key: string;
+      state: 'ACTIVE' | 'INACTIVE' | 'DELETED';
+    }>;
+    return Object.fromEntries(rows.map((row) => [row.vote_key, row.state]));
+  }
+
+  public findStatesInRange(
+    guildId: number,
+    startMs: number,
+    endMs: number,
+  ): Record<string, 'ACTIVE' | 'INACTIVE' | 'DELETED'> {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT vote_key, state
+          FROM participation_states
+          WHERE guild_id = ? AND spawn_time BETWEEN ? AND ?
+        `,
+      )
+      .all(guildId, startMs, endMs) as Array<{
       vote_key: string;
       state: 'ACTIVE' | 'INACTIVE' | 'DELETED';
     }>;
@@ -133,6 +245,57 @@ export class BossVotesRepository {
       });
     });
     return result;
+  }
+
+  public findParticipantsInRange(
+    guildId: number,
+    startMs: number,
+    endMs: number,
+  ): VoteParticipantDetail[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT vote_key, user_id, nickname_snapshot, created_at
+          FROM boss_participants
+          WHERE guild_id = ? AND spawn_time BETWEEN ? AND ?
+          ORDER BY spawn_time ASC, created_at ASC, user_id ASC
+        `,
+      )
+      .all(guildId, startMs, endMs) as Array<{
+      vote_key: string;
+      user_id: number;
+      nickname_snapshot: string;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      voteKey: row.vote_key,
+      userId: row.user_id,
+      nickname: row.nickname_snapshot,
+      joinedAt: row.created_at,
+    }));
+  }
+
+  public findActiveMembers(guildId: number): VoteMember[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT id, username, nickname, role
+          FROM users
+          WHERE guild_id = ? AND is_active = 1
+          ORDER BY COALESCE(NULLIF(nickname, ''), username) COLLATE NOCASE ASC, id ASC
+        `,
+      )
+      .all(guildId) as Array<{
+      id: number;
+      username: string;
+      nickname: string;
+      role: UserRole;
+    }>;
+    return rows.map((row) => ({
+      userId: row.id,
+      nickname: row.nickname || row.username,
+      role: row.role,
+    }));
   }
 
   public toggleParticipation(
@@ -180,7 +343,13 @@ export class BossVotesRepository {
   private insertAudit(
     actor: VoteActor,
     voteKey: string,
-    action: 'MANUAL_VOTE_CREATED' | 'PARTICIPATION_TOGGLED',
+    action:
+      | 'MANUAL_VOTE_CREATED'
+      | 'MANUAL_VOTE_DELETED'
+      | 'PARTICIPATION_TOGGLED'
+      | 'PARTICIPANT_REMOVED'
+      | 'VOTE_CLOSED'
+      | 'VOTE_DELETED',
     metadata: Record<string, unknown>,
   ): void {
     this.db

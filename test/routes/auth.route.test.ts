@@ -133,6 +133,84 @@ describe('auth routes', () => {
     expect(loginResponse.json()).not.toHaveProperty('data');
   });
 
+  it('accepts tokens signed by the previous key during a key rotation', async () => {
+    const config = createTestConfig();
+    config.jwtPreviousSecret = 'previous-secret-that-is-long-enough-for-jwt';
+    const app = await buildApp(config, { logger: false });
+    openApps.push(app);
+    const registerResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: {
+        mode: 'CREATE_GUILD',
+        guild_name: '키 교체 테스트 길드',
+        ...profilePayload,
+      },
+    });
+    const identity = (
+      registerResponse.json() as {
+        data: { userId: number; guildId: number; role: 'MASTER' };
+      }
+    ).data;
+    const previousToken = app.jwt.sign(
+      {
+        sub: String(identity.userId),
+        guildId: identity.guildId,
+        role: identity.role,
+        username: profilePayload.username,
+        nickname: profilePayload.nickname,
+      },
+      { key: config.jwtPreviousSecret },
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/users/me',
+      headers: { authorization: `Bearer ${previousToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: identity.userId });
+  });
+
+  it('normalizes the old web token payload with current database identity', async () => {
+    const app = await createApp();
+    const registerResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: {
+        mode: 'CREATE_GUILD',
+        guild_name: '구형 토큰 테스트 길드',
+        ...profilePayload,
+      },
+    });
+    const identity = (
+      registerResponse.json() as {
+        data: { userId: number; guildId: number; role: 'MASTER' };
+      }
+    ).data;
+    const legacyToken = app.jwt.sign({
+      id: identity.userId,
+      role: identity.role,
+      username: profilePayload.username,
+      nickname: profilePayload.nickname,
+    } as unknown as Parameters<typeof app.jwt.sign>[0]);
+
+    app.db
+      .prepare("UPDATE users SET role = 'ADMIN', nickname = ? WHERE id = ?")
+      .run('현재 닉네임', identity.userId);
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/users/me',
+      headers: { authorization: `Bearer ${legacyToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: identity.userId,
+      role: 'ADMIN',
+      nickname: '현재 닉네임',
+    });
+  });
+
   it('joins an existing guild with the role attached to the invite code', async () => {
     const app = await createApp();
 
