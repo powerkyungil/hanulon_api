@@ -312,6 +312,7 @@ modules/schedules/
 /api/v1/collections
 /api/v1/collections/:id
 /api/v1/collection-completions
+/api/v1/collection-completion-logs
 /api/v1/collection-exclusions
 /api/v1/collection-exclusions/toggle
 /api/v1/content-groups
@@ -417,6 +418,8 @@ modules/schedules/
 - 보유 상태와 제외 대상은 같은 길드의 활성 사용자와 같은 길드의 item만 허용한다.
 - 모든 mutation은 `collection_audit_logs`에 기록한다.
 - 보유 상태 변경 로그는 대상 `collection_item_id`를 외래키로 저장하고 대상 item 삭제 시 함께 삭제한다.
+- 보유 상태 변경 로그 조회는 `MASTER`와 로그인 아이디가 `움매`인 활성 회원만 가능하며 현재 길드의 로그를 ID 내림차순 cursor 방식으로 반환한다.
+- `GET /api/v1/collection-completion-logs`는 `limit`(기본 30, 최대 100), 선택적 `cursor`, 선택적 `targetUserId`를 받고 변경자·대상 회원·컬렉션·item·변경 상태·epoch milliseconds 시각을 반환한다.
 - Flutter와 기존 웹의 `/api/v2/collections`, `/api/v2/user-collections`, `/api/collections`, `/api/user-collections`, `/api/excluded-members`는 compatibility route로 제공한다.
 
 콘텐츠 참여 그룹 API는 다음 정책을 사용한다.

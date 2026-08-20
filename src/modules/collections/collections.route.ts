@@ -8,6 +8,7 @@ import {
   collectionBodySchema,
   collectionParamsSchema,
   completionBodySchema,
+  completionLogQuerySchema,
   exclusionBodySchema,
   legacyCollectionListResponseSchema,
   legacyCompletionListResponseSchema,
@@ -19,12 +20,14 @@ import {
   v1CollectionListResponseSchema,
   v1CollectionResponseSchema,
   v1CompletionListResponseSchema,
+  v1CompletionLogListResponseSchema,
   v1CompletionMutationResponseSchema,
   v1ExclusionListResponseSchema,
   v1ExclusionMutationResponseSchema,
   type CollectionBody,
   type CollectionParams,
   type CompletionBody,
+  type CompletionLogQuery,
   type ExclusionBody,
 } from './collections.schema';
 import { CollectionsService } from './collections.service';
@@ -313,6 +316,34 @@ export const registerCollectionRoutes = async (app: FastifyInstance): Promise<vo
     `${API_PREFIX}/collection-exclusions`,
     `${API_PREFIX}/collection-exclusions/toggle`,
     'v1',
+  );
+
+  app.get(
+    `${API_PREFIX}/collection-completion-logs`,
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['collections'],
+        querystring: completionLogQuerySchema,
+        response: { 200: v1CompletionLogListResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = identityFromRequest(request);
+      const query = request.query as CompletionLogQuery;
+      const limit = query.limit ?? 30;
+      const page = service.getCompletionLogs(
+        identity.userId,
+        identity.guildId,
+        query.cursor,
+        limit,
+        query.targetUserId,
+      );
+      return reply.send({
+        data: page.items,
+        meta: { limit, nextCursor: page.nextCursor },
+      });
+    },
   );
 
   registerDefinitionRoutes('/api/v2/collections', 'legacy');

@@ -3,6 +3,7 @@ import type { UserRole } from '../auth/auth.types';
 export interface CollectionActor {
   id: number;
   guildId: number;
+  username: string;
   role: UserRole;
   isActive: boolean;
 }
@@ -35,6 +36,26 @@ export interface CollectionInput {
 export interface CollectionCompletion {
   userId: number;
   collectionItemId: number;
+}
+
+export interface CollectionCompletionLog {
+  id: number;
+  actorUserId: number;
+  actorNickname: string | null;
+  targetUserId: number;
+  targetNickname: string | null;
+  collectionId: number;
+  collectionName: string;
+  collectionItemId: number;
+  part: string;
+  enchantment: string;
+  completed: boolean;
+  createdAt: number;
+}
+
+export interface CollectionCompletionLogPage {
+  items: CollectionCompletionLog[];
+  nextCursor: number | null;
 }
 
 export type CollectionMutationStatus = 'added' | 'removed';

@@ -328,6 +328,156 @@ describe('collection completion and exclusion routes', () => {
     expect(deleted.statusCode).toBe(204);
   });
 
+  it('returns guild-scoped completion logs to the master and 움매 account only', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, '체크 로그 길드', 'logowner');
+    const admin = await joinGuild(app, owner.guildId, 'ADMIN', 'logadmin');
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'logmember');
+    const completionLogViewer = await joinGuild(
+      app,
+      owner.guildId,
+      'MEMBER',
+      'completionlogviewer',
+    );
+    app.db
+      .prepare('UPDATE users SET username = ? WHERE id = ? AND guild_id = ?')
+      .run('움매', completionLogViewer.userId, owner.guildId);
+    const otherOwner = await createGuild(app, '다른 체크 로그 길드', 'otherlogowner');
+
+    const collectionId = await createCollection(app, admin.token, '로그 컬렉션');
+    const collections = await app.inject({
+      method: 'GET',
+      url: '/api/v1/collections',
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+    const itemId = (collections.json() as { data: Array<{ items: Array<{ id: number }> }> })
+      .data[0]!.items[0]!.id;
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/v1/collection-completions',
+      headers: { authorization: `Bearer ${completionLogViewer.token}` },
+      payload: {
+        userId: completionLogViewer.userId,
+        collectionItemId: itemId,
+        completed: true,
+      },
+    });
+    await app.inject({
+      method: 'PUT',
+      url: '/api/v1/collection-completions',
+      headers: { authorization: `Bearer ${member.token}` },
+      payload: { userId: member.userId, collectionItemId: itemId, completed: true },
+    });
+    await app.inject({
+      method: 'PUT',
+      url: '/api/v1/collection-completions',
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: { userId: member.userId, collectionItemId: itemId, completed: false },
+    });
+
+    const otherCollectionId = await createCollection(app, otherOwner.token, '다른 로그 컬렉션');
+    const otherItem = app.db
+      .prepare('SELECT id FROM collection_items WHERE collection_id = ? ORDER BY id LIMIT 1')
+      .get(otherCollectionId) as { id: number };
+    await app.inject({
+      method: 'PUT',
+      url: '/api/v1/collection-completions',
+      headers: { authorization: `Bearer ${otherOwner.token}` },
+      payload: {
+        userId: otherOwner.userId,
+        collectionItemId: otherItem.id,
+        completed: true,
+      },
+    });
+
+    const memberDenied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/collection-completion-logs',
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+    expect(memberDenied.statusCode).toBe(403);
+
+    const adminDenied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/collection-completion-logs',
+      headers: { authorization: `Bearer ${admin.token}` },
+    });
+    expect(adminDenied.statusCode).toBe(403);
+
+    const firstPage = await app.inject({
+      method: 'GET',
+      url: `/api/v1/collection-completion-logs?limit=1&targetUserId=${member.userId}`,
+      headers: { authorization: `Bearer ${completionLogViewer.token}` },
+    });
+    expect(firstPage.statusCode).toBe(200);
+    const firstPageBody = firstPage.json() as {
+      data: Array<{
+        id: number;
+        actorUserId: number;
+        actorNickname: string;
+        targetUserId: number;
+        targetNickname: string;
+        collectionId: number;
+        collectionName: string;
+        collectionItemId: number;
+        part: string;
+        enchantment: string;
+        completed: boolean;
+        createdAt: number;
+      }>;
+      meta: { limit: number; nextCursor: number | null };
+    };
+    expect(firstPageBody.data).toHaveLength(1);
+    expect(firstPageBody.data[0]).toMatchObject({
+      actorUserId: owner.userId,
+      actorNickname: 'logowner 길드장',
+      targetUserId: member.userId,
+      targetNickname: 'logmember',
+      collectionId,
+      collectionName: '로그 컬렉션',
+      collectionItemId: itemId,
+      part: '발키리 갑옷',
+      enchantment: '강화 7',
+      completed: false,
+    });
+    expect(firstPageBody.data[0]!.createdAt).toBeGreaterThan(0);
+    expect(firstPageBody.meta).toEqual({
+      limit: 1,
+      nextCursor: firstPageBody.data[0]!.id,
+    });
+
+    const secondPage = await app.inject({
+      method: 'GET',
+      url: `/api/v1/collection-completion-logs?limit=1&targetUserId=${member.userId}&cursor=${firstPageBody.meta.nextCursor}`,
+      headers: { authorization: `Bearer ${owner.token}` },
+    });
+    expect(secondPage.statusCode).toBe(200);
+    expect(secondPage.json()).toMatchObject({
+      data: [
+        {
+          actorUserId: member.userId,
+          targetUserId: member.userId,
+          collectionId,
+          collectionItemId: itemId,
+          completed: true,
+        },
+      ],
+      meta: { limit: 1, nextCursor: null },
+    });
+
+    const crossGuildTarget = await app.inject({
+      method: 'GET',
+      url: `/api/v1/collection-completion-logs?targetUserId=${otherOwner.userId}`,
+      headers: { authorization: `Bearer ${completionLogViewer.token}` },
+    });
+    expect(crossGuildTarget.statusCode).toBe(200);
+    expect(crossGuildTarget.json()).toEqual({
+      data: [],
+      meta: { limit: 30, nextCursor: null },
+    });
+  });
+
   it('lets staff toggle active same-guild priority exclusions and audits mutations', async () => {
     const app = await createApp();
     const owner = await createGuild(app, '제외 관리 길드', 'exclusionowner');

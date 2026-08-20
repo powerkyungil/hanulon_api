@@ -6,6 +6,8 @@ import type {
   CollectionActor,
   CollectionAuditAction,
   CollectionCompletion,
+  CollectionCompletionLog,
+  CollectionCompletionLogPage,
   CollectionInput,
   CollectionMutationStatus,
   ItemCollection,
@@ -14,6 +16,7 @@ import type {
 interface ActorRow {
   id: number;
   guild_id: number;
+  username: string;
   role: UserRole;
   is_active: number;
 }
@@ -33,6 +36,21 @@ interface CompletionRow {
   collection_item_id: number;
 }
 
+interface CompletionLogRow {
+  id: number;
+  actor_user_id: number;
+  actor_nickname: string | null;
+  target_user_id: number;
+  target_nickname: string | null;
+  collection_id: number;
+  collection_name: string;
+  collection_item_id: number;
+  part: string;
+  enchantment: string;
+  completed: number;
+  created_at_ms: number;
+}
+
 export class CollectionsRepository {
   public constructor(private readonly db: Database.Database) {}
 
@@ -40,7 +58,7 @@ export class CollectionsRepository {
     const row = this.db
       .prepare(
         `
-          SELECT id, guild_id, role, is_active
+          SELECT id, guild_id, username, role, is_active
           FROM users
           WHERE id = ? AND guild_id = ?
           LIMIT 1
@@ -51,6 +69,7 @@ export class CollectionsRepository {
     return {
       id: row.id,
       guildId: row.guild_id,
+      username: row.username,
       role: row.role,
       isActive: row.is_active === 1,
     };
@@ -247,6 +266,79 @@ export class CollectionsRepository {
       userId: row.user_id,
       collectionItemId: row.collection_item_id,
     }));
+  }
+
+  public findCompletionLogs(
+    guildId: number,
+    cursor: number | undefined,
+    limit: number,
+    targetUserId?: number,
+  ): CollectionCompletionLogPage {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT
+            cal.id,
+            cal.actor_user_id,
+            actor.nickname AS actor_nickname,
+            CAST(json_extract(cal.metadata_json, '$.userId') AS INTEGER) AS target_user_id,
+            target.nickname AS target_nickname,
+            c.id AS collection_id,
+            c.name AS collection_name,
+            ci.id AS collection_item_id,
+            ci.part,
+            ci.enchantment,
+            CAST(json_extract(cal.metadata_json, '$.completed') AS INTEGER) AS completed,
+            CAST(strftime('%s', cal.created_at) AS INTEGER) * 1000 AS created_at_ms
+          FROM collection_audit_logs AS cal
+          JOIN collection_items AS ci ON ci.id = cal.collection_item_id
+          JOIN collections AS c ON c.id = ci.collection_id AND c.guild_id = cal.guild_id
+          LEFT JOIN users AS actor
+            ON actor.id = cal.actor_user_id AND actor.guild_id = cal.guild_id
+          LEFT JOIN users AS target
+            ON target.id = CAST(json_extract(cal.metadata_json, '$.userId') AS INTEGER)
+            AND target.guild_id = cal.guild_id
+          WHERE cal.guild_id = ?
+            AND cal.action = 'COMPLETION_CHANGED'
+            AND (? IS NULL OR cal.id < ?)
+            AND (
+              ? IS NULL
+              OR CAST(json_extract(cal.metadata_json, '$.userId') AS INTEGER) = ?
+            )
+          ORDER BY cal.id DESC
+          LIMIT ?
+        `,
+      )
+      .all(
+        guildId,
+        cursor ?? null,
+        cursor ?? null,
+        targetUserId ?? null,
+        targetUserId ?? null,
+        limit + 1,
+      ) as CompletionLogRow[];
+
+    const hasNextPage = rows.length > limit;
+    const pageRows = hasNextPage ? rows.slice(0, limit) : rows;
+    const items: CollectionCompletionLog[] = pageRows.map((row) => ({
+      id: row.id,
+      actorUserId: row.actor_user_id,
+      actorNickname: row.actor_nickname,
+      targetUserId: row.target_user_id,
+      targetNickname: row.target_nickname,
+      collectionId: row.collection_id,
+      collectionName: row.collection_name,
+      collectionItemId: row.collection_item_id,
+      part: row.part,
+      enchantment: row.enchantment,
+      completed: row.completed === 1,
+      createdAt: row.created_at_ms,
+    }));
+
+    return {
+      items,
+      nextCursor: hasNextPage ? (items.at(-1)?.id ?? null) : null,
+    };
   }
 
   public activeUserExists(guildId: number, userId: number): boolean {

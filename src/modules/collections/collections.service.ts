@@ -3,6 +3,7 @@ import { CollectionsRepository } from './collections.repository';
 import type {
   CollectionActor,
   CollectionCompletion,
+  CollectionCompletionLogPage,
   CollectionInput,
   CollectionMutationStatus,
   ItemCollection,
@@ -98,6 +99,17 @@ export class CollectionsService {
     return this.repository.findCompletions(guildId);
   }
 
+  public getCompletionLogs(
+    userId: number,
+    guildId: number,
+    cursor: number | undefined,
+    limit: number,
+    targetUserId?: number,
+  ): CollectionCompletionLogPage {
+    this.requireCompletionLogViewer(userId, guildId);
+    return this.repository.findCompletionLogs(guildId, cursor, limit, targetUserId);
+  }
+
   public setCompletion(
     userId: number,
     guildId: number,
@@ -172,6 +184,14 @@ export class CollectionsService {
     const actor = this.requireActiveActor(userId, guildId);
     if (actor.role !== 'MASTER' && actor.role !== 'ADMIN') {
       throw new AppError('FORBIDDEN', '컬렉션 관리 권한이 없습니다.', 403);
+    }
+    return actor;
+  }
+
+  private requireCompletionLogViewer(userId: number, guildId: number): CollectionActor {
+    const actor = this.requireActiveActor(userId, guildId);
+    if (actor.role !== 'MASTER' && actor.username !== '움매') {
+      throw new AppError('FORBIDDEN', '컬렉션 체크 변경 로그 조회 권한이 없습니다.', 403);
     }
     return actor;
   }

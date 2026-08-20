@@ -53,6 +53,14 @@ export const completionBodySchema = Type.Object(
   },
   { additionalProperties: false },
 );
+export const completionLogQuerySchema = Type.Object(
+  {
+    cursor: Type.Optional(Type.Integer({ minimum: 1 })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    targetUserId: Type.Optional(Type.Integer({ minimum: 1 })),
+  },
+  { additionalProperties: false },
+);
 export const exclusionBodySchema = Type.Object(
   { userId: Type.Integer({ minimum: 1 }) },
   { additionalProperties: false },
@@ -83,6 +91,30 @@ export const legacyCompletionListResponseSchema = Type.Array(legacyCompletionSch
 export const v1CompletionMutationResponseSchema = Type.Object({
   data: Type.Object({ status: mutationStatusSchema, completed: Type.Boolean() }),
 });
+const nullableStringSchema = Type.Union([Type.String(), Type.Null()]);
+const nullableIntegerSchema = Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]);
+export const v1CompletionLogListResponseSchema = Type.Object({
+  data: Type.Array(
+    Type.Object({
+      id: Type.Integer({ minimum: 1 }),
+      actorUserId: Type.Integer({ minimum: 1 }),
+      actorNickname: nullableStringSchema,
+      targetUserId: Type.Integer({ minimum: 1 }),
+      targetNickname: nullableStringSchema,
+      collectionId: Type.Integer({ minimum: 1 }),
+      collectionName: Type.String(),
+      collectionItemId: Type.Integer({ minimum: 1 }),
+      part: Type.String(),
+      enchantment: Type.String(),
+      completed: Type.Boolean(),
+      createdAt: Type.Integer({ minimum: 0 }),
+    }),
+  ),
+  meta: Type.Object({
+    limit: Type.Integer({ minimum: 1, maximum: 100 }),
+    nextCursor: nullableIntegerSchema,
+  }),
+});
 export const legacyMutationStatusResponseSchema = Type.Object({ status: mutationStatusSchema });
 
 export const v1ExclusionListResponseSchema = Type.Object({
@@ -96,4 +128,5 @@ export const v1ExclusionMutationResponseSchema = Type.Object({
 export type CollectionBody = Static<typeof collectionBodySchema>;
 export type CollectionParams = Static<typeof collectionParamsSchema>;
 export type CompletionBody = Static<typeof completionBodySchema>;
+export type CompletionLogQuery = Static<typeof completionLogQuerySchema>;
 export type ExclusionBody = Static<typeof exclusionBodySchema>;
