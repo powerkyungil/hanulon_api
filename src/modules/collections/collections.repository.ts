@@ -316,11 +316,16 @@ export class CollectionsRepository {
           .run(actor.guildId, userId, itemId);
       }
       if (wasCompleted !== completed) {
-        this.insertAudit(actor, 'COMPLETION_CHANGED', {
-          userId,
-          collectionItemId: itemId,
-          completed,
-        });
+        this.insertAudit(
+          actor,
+          'COMPLETION_CHANGED',
+          {
+            userId,
+            collectionItemId: itemId,
+            completed,
+          },
+          itemId,
+        );
       }
       return completed ? 'added' : 'removed';
     });
@@ -368,14 +373,21 @@ export class CollectionsRepository {
     actor: CollectionActor,
     action: CollectionAuditAction,
     metadata: Record<string, unknown>,
+    collectionItemId?: number,
   ): void {
     this.db
       .prepare(
         `
-          INSERT INTO collection_audit_logs (guild_id, actor_user_id, action, metadata_json)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO collection_audit_logs (
+            guild_id,
+            actor_user_id,
+            collection_item_id,
+            action,
+            metadata_json
+          )
+          VALUES (?, ?, ?, ?, ?)
         `,
       )
-      .run(actor.guildId, actor.id, action, JSON.stringify(metadata));
+      .run(actor.guildId, actor.id, collectionItemId ?? null, action, JSON.stringify(metadata));
   }
 }

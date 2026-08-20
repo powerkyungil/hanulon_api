@@ -416,6 +416,7 @@ modules/schedules/
 - 컬렉션 이름·item 부위·강화 상태는 각각 최대 100자이며 컬렉션에는 item이 하나 이상 있어야 한다.
 - 보유 상태와 제외 대상은 같은 길드의 활성 사용자와 같은 길드의 item만 허용한다.
 - 모든 mutation은 `collection_audit_logs`에 기록한다.
+- 보유 상태 변경 로그는 대상 `collection_item_id`를 외래키로 저장하고 대상 item 삭제 시 함께 삭제한다.
 - Flutter와 기존 웹의 `/api/v2/collections`, `/api/v2/user-collections`, `/api/collections`, `/api/user-collections`, `/api/excluded-members`는 compatibility route로 제공한다.
 
 콘텐츠 참여 그룹 API는 다음 정책을 사용한다.
@@ -535,7 +536,7 @@ schedule_history / vote_history
 - `collections`와 `collection_items`를 분리하고 item의 정수 ID를 보유 상태의 안정적인 키로 사용한다.
 - `user_collection_items`는 `(guild_id, user_id, collection_item_id)` 기본키로 중복 보유 상태를 방지한다.
 - `excluded_members`는 `(guild_id, user_id)` 기본키를 사용한다.
-- 컬렉션 삭제는 item과 보유 상태를 cascade 삭제하지만 `collection_audit_logs`는 운영 이력으로 보존한다.
+- 컬렉션 삭제는 item과 보유 상태를 cascade 삭제한다. 컬렉션 정의 감사 로그는 보존하지만 삭제된 item의 보유 상태 변경 로그는 함께 삭제한다.
 - 컬렉션 이름이나 item 표시 문구를 변경해도 동일 item ID의 기존 보유 상태는 유지한다.
 
 ### 9.7 콘텐츠 참여 그룹 데이터

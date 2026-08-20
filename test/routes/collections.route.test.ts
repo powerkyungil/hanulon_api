@@ -196,6 +196,17 @@ describe('collection definition routes', () => {
     });
     expect(completed.statusCode).toBe(200);
 
+    const completionAuditBeforeItemRemoval = app.db
+      .prepare(
+        `
+          SELECT collection_item_id
+          FROM collection_audit_logs
+          WHERE action = 'COMPLETION_CHANGED' AND actor_user_id = ?
+        `,
+      )
+      .get(owner.userId) as { collection_item_id: number } | undefined;
+    expect(completionAuditBeforeItemRemoval?.collection_item_id).toBe(firstId);
+
     const update = await app.inject({
       method: 'PUT',
       url: `/api/v1/collections/${collectionId}`,
@@ -248,6 +259,17 @@ describe('collection definition routes', () => {
       headers: { authorization: `Bearer ${owner.token}` },
     });
     expect(cascaded.json()).toEqual([]);
+
+    const completionAuditAfterItemRemoval = app.db
+      .prepare(
+        `
+          SELECT 1
+          FROM collection_audit_logs
+          WHERE action = 'COMPLETION_CHANGED' AND collection_item_id = ?
+        `,
+      )
+      .get(firstId);
+    expect(completionAuditAfterItemRemoval).toBeUndefined();
   });
 });
 
