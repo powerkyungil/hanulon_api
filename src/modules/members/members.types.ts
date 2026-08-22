@@ -49,6 +49,10 @@ export interface ProfileIdentity {
   isActive: boolean;
 }
 
+export interface AccountDeletionIdentity extends ProfileIdentity {
+  passwordHash: string;
+}
+
 export interface GuildProfileSettings {
   allowMemberCombatPowerEdit: boolean;
 }

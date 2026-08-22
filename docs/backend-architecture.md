@@ -336,6 +336,9 @@ modules/schedules/
 - 길드장 위임은 기존 `MASTER → MEMBER`, 대상 `MEMBER/ADMIN → MASTER`를 하나의 transaction에서 처리한다.
 - 역할·권한 판단은 JWT claim만 사용하지 않고 요청 시점의 DB 사용자 상태를 다시 확인한다.
 - 역할 변경·위임·비밀번호 초기화·강퇴는 `member_audit_logs`에 기록한다.
+- 본인 계정 탈퇴는 `DELETE /api/v1/auth/me`에 `{ "password": "현재 비밀번호" }`를 보내며, 현재 Flutter 호환 경로인 `DELETE /api/users/me`도 동일한 정책으로 제공한다.
+- 탈퇴 요청은 현재 비밀번호를 bcrypt로 다시 검증한다. 불일치는 `ACCOUNT_DELETE_PASSWORD_INVALID`(401)로 거절한다. 다른 사용자가 한 명이라도 있는 길드의 `MASTER`는 `MASTER_ACCOUNT_DELETE_FORBIDDEN`(409)으로 위임을 요구한다.
+- 일반 회원 탈퇴는 현재 인증 사용자의 `id`와 DB의 `guildId`를 함께 제한해 hard delete하며 길드와 다른 길드원의 공유 데이터는 삭제하지 않는다. 유일한 회원인 `MASTER`는 계정과 길드 전체를 한 transaction에서 hard delete할 수 있다. 삭제된 사용자 행을 인증 시 다시 조회할 수 없으므로 기존 JWT도 즉시 401 처리된다.
 
 마스터 설정과 가입 코드 API는 다음 정책을 사용한다.
 
@@ -587,6 +590,16 @@ infrastructure/db/migrations/
 - 적용 순서는 migration table로 기록한다.
 - 데이터 변환이 필요한 migration은 backup과 rollback 방법을 문서에 기록한다.
 - 운영 DB에서 수동 SQL을 실행한 경우 반드시 다음 migration에 반영한다.
+
+### 9.12 계정 탈퇴 데이터
+
+- 계정 탈퇴는 하나의 transaction에서 `users` 한 행을 삭제하고 FK `ON DELETE CASCADE`로 `characters`, `alternate_characters`, `support_requests`, `support_applications`, `user_collection_items`, `excluded_members`, `group_members`, `siege_records`, `boss_participants`의 해당 사용자 행만 삭제한다.
+- 유일한 `MASTER` 탈퇴는 transaction 안에서 `users`의 같은 `guild_id`에 다른 행이 없는지 재검증한 뒤, MASTER 계정과 `guilds` 행을 삭제한다. 길드 FK가 없는 `schedule_history`와 모든 audit log도 해당 `guild_id`로 명시 삭제하며 다른 길드 행은 변경하지 않는다.
+- 탈퇴자가 다른 회원의 손지원 요청에 선택되어 있으면 삭제 전에 그 요청을 `OPEN`으로 되돌리고 `selected_application_id`를 비운다. 탈퇴자 본인의 요청은 신청과 함께 cascade 삭제된다.
+- 일반 회원 탈퇴에서는 `guilds`, 길드 설정, 컬렉션·item 정의, 콘텐츠 그룹, 보스 정의·일정, 공지 등 길드 공유 리소스를 보존한다. 유일한 `MASTER` 탈퇴에서는 소유자가 없는 길드와 그 종속 공유 리소스를 함께 삭제한다.
+- 법적 보존 의무가 확인된 감사 이력은 없으므로 탈퇴자를 식별하는 행은 `member_audit_logs`, `guild_audit_logs`, `notice_audit_logs`, `support_audit_logs`, `collection_audit_logs`, `content_group_audit_logs`, `siege_audit_logs`, `boss_audit_logs`, `schedule_audit_logs`, `boss_vote_audit_logs`에서 함께 hard delete한다. 직접 actor/target 컬럼뿐 아니라 JSON의 대상 `userId`·멤버 ID 배열·username·nickname과 탈퇴자의 요청·신청을 가리키는 행도 포함한다.
+- 공유 리소스 자체를 지우지 않기 위해 `notice_rules.created_by`, `price_guides.created_by`, `boss_controls.updated_by`, 다른 회원의 `siege_records.updated_by`, `boss_schedules.created_by`, `schedule_history.created_by`, `participation_states.updated_by`, `manual_boss_votes.created_by`가 탈퇴자이면 복구 불가능한 비회원 sentinel `0`으로 치환한다.
+- 애플리케이션은 IP·세션·요청 이력을 DB에 저장하지 않는다. Fastify request logger도 IP와 port를 직렬화하지 않으며 Authorization과 password 경로를 redaction한다. reverse proxy·호스팅 사업자 등 애플리케이션 외부 로그의 삭제·보존은 별도 인프라 정책으로 관리한다.
 
 ## 10. 외부 OCR 연동
 

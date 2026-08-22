@@ -9,7 +9,11 @@ import {
   skillLevels,
   skillNames,
 } from '../auth/auth.constants';
-import { MembersRepository } from './members.repository';
+import {
+  AccountDeletionStateConflictError,
+  MasterAccountDeletionHasMembersError,
+  MembersRepository,
+} from './members.repository';
 import type { ProfileIdentity, ProfileUpdateInput, UserProfile } from './members.types';
 
 const BCRYPT_ROUNDS = 12;
@@ -63,6 +67,46 @@ export class MembersService {
 
     const passwordHash = input.password ? await bcrypt.hash(input.password, BCRYPT_ROUNDS) : null;
     this.repository.updateProfile(identity, input, passwordHash);
+  }
+
+  public async deleteMe(userId: number, guildId: number, password: string): Promise<void> {
+    const identity = this.repository.findAccountForDeletion(userId, guildId);
+    if (!identity || !identity.isActive) {
+      throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
+    }
+
+    const passwordMatches = await bcrypt.compare(password, identity.passwordHash);
+    if (!passwordMatches) {
+      throw new AppError(
+        'ACCOUNT_DELETE_PASSWORD_INVALID',
+        '현재 비밀번호가 올바르지 않습니다.',
+        401,
+      );
+    }
+
+    try {
+      if (identity.role === 'MASTER') {
+        this.repository.deleteSoleMasterAndGuild(identity);
+      } else {
+        this.repository.deleteAccount(identity);
+      }
+    } catch (error) {
+      if (error instanceof MasterAccountDeletionHasMembersError) {
+        throw new AppError(
+          'MASTER_ACCOUNT_DELETE_FORBIDDEN',
+          '다른 길드원이 있어 길드장 위임 후 탈퇴할 수 있습니다.',
+          409,
+        );
+      }
+      if (error instanceof AccountDeletionStateConflictError) {
+        throw new AppError(
+          'ACCOUNT_DELETE_STATE_CONFLICT',
+          '계정 상태가 변경되었습니다. 다시 로그인한 뒤 시도해 주세요.',
+          409,
+        );
+      }
+      throw error;
+    }
   }
 
   public changeRole(

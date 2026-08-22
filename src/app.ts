@@ -34,7 +34,28 @@ export const buildApp = async (
       options.logger === undefined
         ? config.nodeEnv === 'test'
           ? false
-          : { level: config.logLevel }
+          : {
+              level: config.logLevel,
+              redact: {
+                paths: [
+                  'req.headers.authorization',
+                  'req.body.password',
+                  'request.headers.authorization',
+                  'request.body.password',
+                ],
+                censor: '[REDACTED]',
+              },
+              serializers: {
+                req(request) {
+                  return {
+                    method: request.method,
+                    url: request.url,
+                    host: request.host,
+                    requestId: request.id,
+                  };
+                },
+              },
+            }
         : options.logger,
     requestIdHeader: 'x-request-id',
     bodyLimit: 5 * 1024 * 1024,

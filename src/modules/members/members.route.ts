@@ -5,6 +5,7 @@ import { AppError } from '../../shared/errors/app-error';
 import { success } from '../../shared/http/response';
 import { MembersRepository } from './members.repository';
 import {
+  accountDeletionBodySchema,
   legacyMasterTransferBodySchema,
   legacyMemberListResponseSchema,
   legacyProfileResponseSchema,
@@ -17,6 +18,7 @@ import {
   roleUpdateBodySchema,
   v1ProfileResponseSchema,
   type LegacyMasterTransferBody,
+  type AccountDeletionBody,
   type LegacyProfileUpdateBody,
   type MasterTransferBody,
   type MemberIdParams,
@@ -167,6 +169,27 @@ export const registerMemberRoutes = async (app: FastifyInstance): Promise<void> 
     );
   };
 
+  const registerDeleteMeRoute = (url: string, responseStyle: ResponseStyle): void => {
+    app.delete(
+      url,
+      {
+        config: routeConfig(responseStyle),
+        preHandler: app.authenticate,
+        schema: {
+          tags: ['members'],
+          body: accountDeletionBodySchema,
+          response: { 204: noContentResponseSchema },
+        },
+      },
+      async (request, reply) => {
+        const identity = identityFromRequest(request);
+        const body = request.body as AccountDeletionBody;
+        await service.deleteMe(identity.userId, identity.guildId, body.password);
+        return reply.code(204).send();
+      },
+    );
+  };
+
   const registerListRoute = (url: string, responseStyle: ResponseStyle): void => {
     app.get(
       url,
@@ -279,6 +302,7 @@ export const registerMemberRoutes = async (app: FastifyInstance): Promise<void> 
 
   registerGetRoute(`${API_PREFIX}/auth/me`, 'v1');
   registerPutRoute(`${API_PREFIX}/auth/me`, 'v1');
+  registerDeleteMeRoute(`${API_PREFIX}/auth/me`, 'v1');
   registerListRoute(`${API_PREFIX}/members`, 'v1');
   registerRoleRoute(`${API_PREFIX}/members/:id/role`, 'v1');
   registerTransferRoute(`${API_PREFIX}/guild/master`, 'v1');
@@ -288,6 +312,7 @@ export const registerMemberRoutes = async (app: FastifyInstance): Promise<void> 
   // Flutter's current ApiPaths use this legacy path and snake_case DTOs.
   registerGetRoute('/api/users/me', 'legacy');
   registerPutRoute('/api/users/me', 'legacy');
+  registerDeleteMeRoute('/api/users/me', 'legacy');
   registerListRoute('/api/users', 'legacy');
   registerRoleRoute('/api/admin/users/:id/role', 'legacy');
   registerTransferRoute('/api/admin/guild/master', 'legacy');

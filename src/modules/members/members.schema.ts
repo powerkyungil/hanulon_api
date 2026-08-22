@@ -147,6 +147,12 @@ export const legacyMasterTransferBodySchema = Type.Object(
   { additionalProperties: false },
 );
 export const noContentResponseSchema = Type.Null();
+export const accountDeletionBodySchema = Type.Object(
+  {
+    password: Type.String({ minLength: 1, maxLength: 72 }),
+  },
+  { additionalProperties: false },
+);
 
 export type ProfileUpdateBody = Static<typeof profileUpdateBodySchema>;
 export type LegacyProfileUpdateBody = Static<typeof legacyProfileUpdateBodySchema>;
@@ -154,3 +160,4 @@ export type MemberIdParams = Static<typeof memberIdParamsSchema>;
 export type RoleUpdateBody = Static<typeof roleUpdateBodySchema>;
 export type MasterTransferBody = Static<typeof masterTransferBodySchema>;
 export type LegacyMasterTransferBody = Static<typeof legacyMasterTransferBodySchema>;
+export type AccountDeletionBody = Static<typeof accountDeletionBodySchema>;

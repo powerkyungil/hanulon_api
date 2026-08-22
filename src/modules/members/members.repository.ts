@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { withTransaction } from '../../infrastructure/db/transaction';
 import type { Equipment, Skills, UserRole } from '../auth/auth.types';
 import type {
+  AccountDeletionIdentity,
   GuildProfileSettings,
   MemberAuditAction,
   ProfileIdentity,
@@ -42,6 +43,10 @@ interface IdentityRow {
   is_active: number;
 }
 
+interface AccountDeletionIdentityRow extends IdentityRow {
+  password_hash: string;
+}
+
 interface ProfileWithAlternateRow extends ProfileRow {
   alternate_id: number | null;
   alternate_character_name: string | null;
@@ -69,6 +74,9 @@ const parseSkills = (value: string | null): Skills => {
   };
 };
 
+export class AccountDeletionStateConflictError extends Error {}
+export class MasterAccountDeletionHasMembersError extends Error {}
+
 export class MembersRepository {
   public constructor(private readonly db: Database.Database) {}
 
@@ -92,6 +100,30 @@ export class MembersRepository {
       role: row.role,
       nickname: row.nickname,
       isActive: row.is_active === 1,
+    };
+  }
+
+  public findAccountForDeletion(userId: number, guildId: number): AccountDeletionIdentity | null {
+    const row = this.db
+      .prepare(
+        `
+          SELECT id, guild_id, username, role, nickname, is_active, password_hash
+          FROM users
+          WHERE id = ? AND guild_id = ?
+          LIMIT 1
+        `,
+      )
+      .get(userId, guildId) as AccountDeletionIdentityRow | undefined;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      guildId: row.guild_id,
+      username: row.username,
+      role: row.role,
+      nickname: row.nickname,
+      isActive: row.is_active === 1,
+      passwordHash: row.password_hash,
     };
   }
 
@@ -386,6 +418,278 @@ export class MembersRepository {
         .prepare('DELETE FROM users WHERE id = ? AND guild_id = ? AND is_active = 1')
         .run(target.id, actor.guildId);
     });
+  }
+
+  public deleteAccount(identity: AccountDeletionIdentity): void {
+    withTransaction(this.db, () => {
+      this.db
+        .prepare(
+          `
+            UPDATE support_requests
+            SET status = 'OPEN',
+                selected_application_id = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE guild_id = ?
+              AND requester_id <> ?
+              AND selected_application_id IN (
+                SELECT sa.id
+                FROM support_applications AS sa
+                INNER JOIN support_requests AS sr ON sr.id = sa.request_id
+                WHERE sr.guild_id = ? AND sa.applicant_id = ?
+              )
+          `,
+        )
+        .run(identity.guildId, identity.id, identity.guildId, identity.id);
+
+      this.deletePersonalAuditLogs(identity);
+      this.anonymizeSharedResourceAttribution(identity);
+
+      const deletion = this.db
+        .prepare(
+          `
+            DELETE FROM users
+            WHERE id = ?
+              AND guild_id = ?
+              AND is_active = 1
+              AND role <> 'MASTER'
+          `,
+        )
+        .run(identity.id, identity.guildId);
+
+      if (deletion.changes !== 1) {
+        throw new AccountDeletionStateConflictError();
+      }
+    });
+  }
+
+  public deleteSoleMasterAndGuild(identity: AccountDeletionIdentity): void {
+    withTransaction(this.db, () => {
+      const otherMember = this.db
+        .prepare(
+          `
+            SELECT 1 AS found
+            FROM users
+            WHERE guild_id = ? AND id <> ?
+            LIMIT 1
+          `,
+        )
+        .get(identity.guildId, identity.id) as { found: number } | undefined;
+      if (otherMember) {
+        throw new MasterAccountDeletionHasMembersError();
+      }
+
+      const userDeletion = this.db
+        .prepare(
+          `
+            DELETE FROM users
+            WHERE id = ?
+              AND guild_id = ?
+              AND is_active = 1
+              AND role = 'MASTER'
+          `,
+        )
+        .run(identity.id, identity.guildId);
+      if (userDeletion.changes !== 1) {
+        throw new AccountDeletionStateConflictError();
+      }
+
+      const detachedGuildTables = [
+        'member_audit_logs',
+        'guild_audit_logs',
+        'notice_audit_logs',
+        'support_audit_logs',
+        'collection_audit_logs',
+        'content_group_audit_logs',
+        'siege_audit_logs',
+        'schedule_history',
+        'boss_audit_logs',
+        'schedule_audit_logs',
+        'boss_vote_audit_logs',
+      ];
+      for (const table of detachedGuildTables) {
+        this.db.prepare(`DELETE FROM ${table} WHERE guild_id = ?`).run(identity.guildId);
+      }
+
+      const guildDeletion = this.db
+        .prepare('DELETE FROM guilds WHERE id = ?')
+        .run(identity.guildId);
+      if (guildDeletion.changes !== 1) {
+        throw new AccountDeletionStateConflictError();
+      }
+    });
+  }
+
+  private deletePersonalAuditLogs(identity: AccountDeletionIdentity): void {
+    const directAuditDeletes: Array<[string, unknown[]]> = [
+      [
+        `
+          DELETE FROM member_audit_logs
+          WHERE guild_id = ? AND (actor_user_id = ? OR target_user_id = ?)
+        `,
+        [identity.guildId, identity.id, identity.id],
+      ],
+      [
+        'DELETE FROM guild_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
+        [identity.guildId, identity.id],
+      ],
+      [
+        'DELETE FROM notice_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
+        [identity.guildId, identity.id],
+      ],
+      [
+        `
+          DELETE FROM support_audit_logs
+          WHERE guild_id = ?
+            AND (
+              actor_user_id = ?
+              OR request_id IN (
+                SELECT id FROM support_requests WHERE guild_id = ? AND requester_id = ?
+              )
+              OR CAST(
+                CASE
+                  WHEN json_valid(metadata_json)
+                  THEN json_extract(metadata_json, '$.applicationId')
+                END AS INTEGER
+              ) IN (
+                SELECT sa.id
+                FROM support_applications AS sa
+                INNER JOIN support_requests AS sr ON sr.id = sa.request_id
+                WHERE sr.guild_id = ? AND sa.applicant_id = ?
+              )
+            )
+        `,
+        [
+          identity.guildId,
+          identity.id,
+          identity.guildId,
+          identity.id,
+          identity.guildId,
+          identity.id,
+        ],
+      ],
+      [
+        `
+          DELETE FROM collection_audit_logs
+          WHERE guild_id = ?
+            AND (
+              actor_user_id = ?
+              OR CAST(
+                CASE
+                  WHEN json_valid(metadata_json)
+                  THEN json_extract(metadata_json, '$.userId')
+                END AS INTEGER
+              ) = ?
+            )
+        `,
+        [identity.guildId, identity.id, identity.id],
+      ],
+      [
+        `
+          DELETE FROM content_group_audit_logs
+          WHERE guild_id = ?
+            AND (
+              actor_user_id = ?
+              OR EXISTS (
+                SELECT 1
+                FROM json_tree(
+                  CASE WHEN json_valid(metadata_json) THEN metadata_json ELSE '{}' END
+                )
+                WHERE json_tree.key IN ('previousMemberIds', 'nextMemberIds')
+                  AND json_tree.type = 'array'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM json_each(json_tree.value)
+                    WHERE CAST(json_each.value AS INTEGER) = ?
+                  )
+              )
+            )
+        `,
+        [identity.guildId, identity.id, identity.id],
+      ],
+      [
+        `
+          DELETE FROM siege_audit_logs
+          WHERE guild_id = ? AND (actor_user_id = ? OR target_user_id = ?)
+        `,
+        [identity.guildId, identity.id, identity.id],
+      ],
+      [
+        'DELETE FROM boss_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
+        [identity.guildId, identity.id],
+      ],
+      [
+        'DELETE FROM schedule_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
+        [identity.guildId, identity.id],
+      ],
+      [
+        `
+          DELETE FROM boss_vote_audit_logs
+          WHERE guild_id = ?
+            AND (
+              actor_user_id = ?
+              OR CAST(
+                CASE
+                  WHEN json_valid(metadata_json)
+                  THEN json_extract(metadata_json, '$.userId')
+                END AS INTEGER
+              ) = ?
+            )
+        `,
+        [identity.guildId, identity.id, identity.id],
+      ],
+    ];
+
+    for (const [sql, params] of directAuditDeletes) {
+      this.db.prepare(sql).run(...params);
+    }
+
+    const auditTables = [
+      'member_audit_logs',
+      'guild_audit_logs',
+      'notice_audit_logs',
+      'support_audit_logs',
+      'collection_audit_logs',
+      'content_group_audit_logs',
+      'siege_audit_logs',
+      'boss_audit_logs',
+      'schedule_audit_logs',
+      'boss_vote_audit_logs',
+    ];
+    for (const table of auditTables) {
+      this.db
+        .prepare(
+          `
+            DELETE FROM ${table}
+            WHERE guild_id = ?
+              AND EXISTS (
+                SELECT 1
+                FROM json_tree(
+                  CASE WHEN json_valid(metadata_json) THEN metadata_json ELSE '{}' END
+                )
+                WHERE json_tree.type = 'text'
+                  AND json_tree.value IN (?, ?)
+              )
+          `,
+        )
+        .run(identity.guildId, identity.username, identity.nickname);
+    }
+  }
+
+  private anonymizeSharedResourceAttribution(identity: AccountDeletionIdentity): void {
+    const attributionUpdates = [
+      'UPDATE notice_rules SET created_by = 0 WHERE guild_id = ? AND created_by = ?',
+      'UPDATE price_guides SET created_by = 0 WHERE guild_id = ? AND created_by = ?',
+      'UPDATE boss_controls SET updated_by = 0 WHERE guild_id = ? AND updated_by = ?',
+      'UPDATE siege_records SET updated_by = 0 WHERE guild_id = ? AND updated_by = ?',
+      'UPDATE boss_schedules SET created_by = 0 WHERE guild_id = ? AND created_by = ?',
+      'UPDATE schedule_history SET created_by = 0 WHERE guild_id = ? AND created_by = ?',
+      'UPDATE participation_states SET updated_by = 0 WHERE guild_id = ? AND updated_by = ?',
+      'UPDATE manual_boss_votes SET created_by = 0 WHERE guild_id = ? AND created_by = ?',
+    ];
+
+    for (const sql of attributionUpdates) {
+      this.db.prepare(sql).run(identity.guildId, identity.id);
+    }
   }
 
   private insertAudit(
