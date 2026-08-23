@@ -32,7 +32,7 @@ describe('health routes', () => {
       data: {
         status: 'ready',
         database: 'ok',
-        migrationsApplied: 17,
+        migrationsApplied: 18,
       },
     });
   });

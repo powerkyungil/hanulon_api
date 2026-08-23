@@ -19,4 +19,7 @@ export const createTestConfig = (): AppConfig => ({
   ocrInvokeUrl: '',
   ocrSecret: '',
   ocrTemplates: [],
+  fcmServiceAccountJson: '',
+  fcmServiceAccountFile: '',
+  fcmDispatchWindowSeconds: 90,
 });

@@ -8,6 +8,8 @@
     "build": "tsc -p tsconfig.build.json && mkdir -p dist/infrastructure/db && cp -R src/infrastructure/db/migrations dist/infrastructure/db/",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
+    "push:boss": "node dist/jobs/dispatch-boss-pushes.js",
+    "push:boss:dev": "tsx src/jobs/dispatch-boss-pushes.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 export type NodeEnvironment = 'development' | 'test' | 'production';
 
@@ -19,6 +19,9 @@ export interface AppConfig {
   ocrInvokeUrl: string;
   ocrSecret: string;
   ocrTemplates: OcrTemplateConfig[];
+  fcmServiceAccountJson: string;
+  fcmServiceAccountFile: string;
+  fcmDispatchWindowSeconds: number;
 }
 
 export interface OcrTemplateConfig {
@@ -100,5 +103,12 @@ export const loadConfig = (source: NodeJS.ProcessEnv = process.env): AppConfig =
     ocrInvokeUrl: source.CLOVA_OCR_INVOKE_URL?.trim() ?? '',
     ocrSecret: source.CLOVA_OCR_SECRET?.trim() ?? '',
     ocrTemplates: parseOcrTemplates(source.CLOVA_OCR_TEMPLATES, source.CLOVA_OCR_TEMPLATE_ID),
+    fcmServiceAccountJson: source.FCM_SERVICE_ACCOUNT_JSON?.trim() ?? '',
+    fcmServiceAccountFile: source.FCM_SERVICE_ACCOUNT_FILE?.trim() ?? '',
+    fcmDispatchWindowSeconds: parsePositiveInteger(
+      source.FCM_DISPATCH_WINDOW_SECONDS,
+      90,
+      'FCM_DISPATCH_WINDOW_SECONDS',
+    ),
   };
 };

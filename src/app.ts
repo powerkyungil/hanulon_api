@@ -16,6 +16,7 @@ import { registerHealthRoutes } from './modules/health/health.route';
 import { registerMemberRoutes } from './modules/members/members.route';
 import { registerNoticeRoutes } from './modules/notices/notices.route';
 import { registerOcrRoutes } from './modules/ocr/ocr.route';
+import { registerPushNotificationRoutes } from './modules/push-notifications/push-notifications.route';
 import { registerScheduleRoutes } from './modules/schedules/schedules.route';
 import { registerSiegeRoutes } from './modules/siege/siege.route';
 import { registerSupportRoutes } from './modules/support/support.route';
@@ -40,8 +41,10 @@ export const buildApp = async (
                 paths: [
                   'req.headers.authorization',
                   'req.body.password',
+                  'req.body.token',
                   'request.headers.authorization',
                   'request.body.password',
+                  'request.body.token',
                 ],
                 censor: '[REDACTED]',
               },
@@ -81,6 +84,7 @@ export const buildApp = async (
   await registerMemberRoutes(app);
   await registerNoticeRoutes(app);
   await registerOcrRoutes(app, config);
+  await registerPushNotificationRoutes(app);
   await registerScheduleRoutes(app, config.bossHistoryRetentionDays);
   await registerSiegeRoutes(app);
   await registerSupportRoutes(app);

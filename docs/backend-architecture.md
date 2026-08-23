@@ -141,6 +141,7 @@ odin_guild_api/
 │       ├── collections/
 │       ├── content-groups/
 │       ├── siege/
+│       ├── push-notifications/
 │       └── ocr/
 ├── test/
 │   ├── unit/
@@ -192,6 +193,7 @@ modules/schedules/
 | `content-groups` | 콘텐츠 그룹과 배치                   | content_groups, group_members                             |
 | `siege`          | 공성전 참여와 다이아                 | siege_records                                             |
 | `ocr`            | OCR template 조회·이미지 분석 proxy  | 외부 API 결과, 파일 미저장                                |
+| `push-notifications` | 로그인 기기 토큰과 보스 일정 FCM 발송 | push_device_tokens, push_delivery_history              |
 
 모듈 사이에서 repository를 직접 호출하지 않는다. 다른 모듈의 데이터가 필요하면 해당 모듈이 제공하는 service/query interface를 호출하고, 순환 의존성이 생기면 공통 query 또는 별도 application service로 분리한다.
 
@@ -323,6 +325,7 @@ modules/schedules/
 /api/v1/siege/members/:id
 /api/v1/ocr/templates
 /api/v1/ocr/boss-schedule
+/api/v1/push-tokens
 ```
 
 기존 웹 API와 이름이 달라지는 endpoint는 Flutter repository에서 adapter를 두거나, 초기 migration 기간에 compatibility route를 별도로 둔다. 새 코드가 legacy 경로를 기준으로 확장되지는 않게 한다.
@@ -366,6 +369,15 @@ modules/schedules/
 - 일정과 보스 정의·참여 데이터는 모두 현재 `guildId`로 격리하며 전체 초기화도 다른 길드에 영향을 주지 않는다.
 - 보스·일정 mutation은 각각 `boss_audit_logs`, `schedule_audit_logs`에 기록한다.
 - Flutter의 기존 `/api/schedules`, `/api/custom-bosses`, `/api/participation-*`, `/api/participants` 경로는 compatibility route로 제공한다.
+
+FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
+
+- 활성 로그인 사용자는 `PUT /api/v1/push-tokens`로 Android FCM 토큰을 등록하거나 갱신하고 `DELETE /api/v1/push-tokens`로 본인 토큰을 삭제한다.
+- 동일 FCM 토큰은 서버 전체에서 한 사용자에게만 속한다. 동일 기기의 토큰이 refresh되면 `(user_id, device_id)` 기준 기존 토큰을 새 토큰으로 교체하고, 다른 계정 로그인 시 토큰 소유권을 현재 사용자로 이전한다.
+- cron은 현재 `boss_schedules`와 서울 시간 기준 요일·시각으로 계산한 고정 일정의 출현 5분 전, 1분 전, 출현 시점에 해당 길드의 모든 활성 사용자 기기로 FCM HTTP v1 메시지를 발송한다.
+- `(guild_id, boss_definition_id, spawn_time, lead_seconds, device_key)` 고유 키와 `PROCESSING/SENT/FAILED` 발송 이력으로 cron 중복 실행, 토큰 refresh와 일정 row 교체에 따른 중복 발송을 차단한다.
+- 외부 FCM 호출은 SQLite transaction 밖에서 실행한다. claim lease가 만료된 작업과 일시 실패만 재시도하며 `UNREGISTERED` 토큰은 자동 삭제한다.
+- 서비스 계정 JSON은 `FCM_SERVICE_ACCOUNT_JSON` 또는 저장소 밖 `FCM_SERVICE_ACCOUNT_FILE`로만 주입한다. 키 원문·FCM 토큰·Authorization header는 응답과 로그에 남기지 않는다.
 
 보스 참여투표 API는 다음 정책을 사용한다.
 
@@ -601,6 +613,13 @@ infrastructure/db/migrations/
 - 공유 리소스 자체를 지우지 않기 위해 `notice_rules.created_by`, `price_guides.created_by`, `boss_controls.updated_by`, 다른 회원의 `siege_records.updated_by`, `boss_schedules.created_by`, `schedule_history.created_by`, `participation_states.updated_by`, `manual_boss_votes.created_by`가 탈퇴자이면 복구 불가능한 비회원 sentinel `0`으로 치환한다.
 - 애플리케이션은 IP·세션·요청 이력을 DB에 저장하지 않는다. Fastify request logger도 IP와 port를 직렬화하지 않으며 Authorization과 password 경로를 redaction한다. reverse proxy·호스팅 사업자 등 애플리케이션 외부 로그의 삭제·보존은 별도 인프라 정책으로 관리한다.
 
+### 9.13 FCM 기기 토큰과 발송 이력
+
+- `push_device_tokens`는 사용자·길드·Android FCM 토큰·선택적 `device_id`와 마지막 확인 시각을 저장한다. 토큰은 전역 unique이며 `(user_id, device_id)`도 unique이다.
+- `push_delivery_history`는 보스 occurrence, 알림 시점(300/60/0초 전), 사용자·설치 기기 키, 상태, 시도 횟수, claim 만료·재시도·성공 시각과 안정적인 오류 코드만 저장한다.
+- 기기 토큰 삭제 후에도 중복 방지를 위한 발송 이력은 보존한다. 사용자 또는 길드 삭제 시에는 외래키 cascade로 해당 이력을 함께 삭제한다.
+- FCM 호출 성공과 DB 성공 기록은 하나의 원자적 transaction으로 묶을 수 없으므로 프로세스가 FCM 성공 직후 종료되는 극히 작은 구간에는 lease 만료 후 재발송 가능성이 있다. 정상 cron 중복·재실행은 DB unique key로 차단한다.
+
 ## 10. 외부 OCR 연동
 
 ```text
@@ -639,6 +658,9 @@ Flutter 이미지 선택
 - `/api/v1/health/live`는 프로세스 생존만 확인한다.
 - `/api/v1/health/ready`는 DB 연결과 migration 상태까지 확인한다.
 - `SIGTERM` 수신 시 신규 요청을 받지 않고 요청·DB 작업을 정리한 뒤 종료한다.
+- 보스 푸시는 빌드 후 `npm run push:boss`를 매분 하나의 cron 항목으로 실행한다. 예: `* * * * * cd /srv/odin-guild-api && /usr/bin/npm run push:boss >> /var/log/odin-guild-push.log 2>&1`.
+- cron 환경에는 API 서버와 같은 `DB_PATH`, `JWT_SECRET` 및 `FCM_SERVICE_ACCOUNT_FILE`(또는 `FCM_SERVICE_ACCOUNT_JSON`)을 제공한다. 서비스 계정 파일은 저장소 밖에 두고 실행 계정만 읽을 수 있게 `chmod 600`을 적용한다.
+- `FCM_DISPATCH_WINDOW_SECONDS` 기본값은 90초다. cron 지연 허용 범위이며 지나치게 크게 설정하면 오래 지난 출현 알림이 발송될 수 있다.
 
 ### 11.3 로그와 모니터링
 
@@ -780,5 +802,6 @@ Flutter 이미지 선택
 | 2026-08-12 | 공성전 참여 API 구현           | 다이아 범위·잔여값 검증, 길드 격리, DB 기반 운영진 권한과 초기화 감사를 적용함      |
 | 2026-08-12 | 보스 일정·참여 API 구현        | occurrence 이력 보존, 서버 쿨타임 계산, 길드 격리와 참여 중복 방지를 적용함         |
 | 2026-08-12 | 보스 참여투표 API 구현         | 일정·이력·수동 투표 병합, 원자적 참여 토글, 마감 상태와 길드 격리를 적용함          |
+| 2026-08-23 | Android FCM 보스 일정 알림 구현 | 사용자 기기 토큰 API, HTTP v1 서비스 계정 인증, 5분·1분·출현 알림과 발송 중복 방지 이력을 적용함 |
 
 새로운 기술 선택이나 기존 결정을 뒤집는 변경은 이 표에 날짜·대안·선택 이유를 추가한다.
