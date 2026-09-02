@@ -167,7 +167,7 @@ describe('push notification routes and dispatch', () => {
       .prepare(
         `
           INSERT INTO boss_definitions (guild_id, type, region, boss, cooldown_hours)
-          VALUES (?, '필드', '미드가르드', '파르바', 8)
+          VALUES (?, '본섭', '미드가르드', '파르바', 8)
         `,
       )
       .run(owner.guildId);
@@ -200,9 +200,13 @@ describe('push notification routes and dispatch', () => {
     expect(sender.messages).toHaveLength(6);
     expect(sender.messages[0]).toMatchObject({
       title: '파르바 출현 5분 전',
+      body: '[본섭] 파르바 5분 후 출현합니다.',
       data: { type: 'BOSS_SCHEDULE', leadSeconds: '300', spawnTime: String(spawnTime) },
     });
-    expect(sender.messages.at(-1)).toMatchObject({ title: '파르바 출현' });
+    expect(sender.messages.at(-1)).toMatchObject({
+      title: '파르바 출현',
+      body: '[본섭] 파르바 출현 시간입니다.',
+    });
     expect(
       app.db
         .prepare("SELECT COUNT(*) AS count FROM push_delivery_history WHERE status = 'SENT'")
@@ -239,6 +243,7 @@ describe('push notification routes and dispatch', () => {
     expect(sender.messages).toEqual([
       expect.objectContaining({
         title: '고정 파르바 출현 5분 전',
+        body: '[고정] 고정 파르바 5분 후 출현합니다.',
         data: expect.objectContaining({ scheduleId: '', spawnTime: String(spawnTime) }),
       }),
     ]);

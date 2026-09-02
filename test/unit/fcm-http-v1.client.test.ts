@@ -20,7 +20,7 @@ const createAccount = (): FirebaseServiceAccount => {
 const message = {
   token: 'fcm-registration-token-000001',
   title: '파르바 출현 5분 전',
-  body: '[미드가르드] 파르바 5분 후 출현합니다.',
+  body: '[본섭] 파르바 5분 후 출현합니다.',
   data: { type: 'BOSS_SCHEDULE' },
 };
 

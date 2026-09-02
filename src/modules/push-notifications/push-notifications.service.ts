@@ -104,7 +104,7 @@ export class BossPushDispatchService {
   }
 
   private toMessage(candidate: BossPushCandidate): PushMessage {
-    const prefix = candidate.region ? `[${candidate.region}] ` : '';
+    const prefix = candidate.type ? `[${candidate.type}] ` : '';
     const timing =
       candidate.leadSeconds === 0
         ? '출현 시간입니다.'
