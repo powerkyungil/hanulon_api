@@ -139,12 +139,21 @@ describe('boss vote routes', () => {
     const owner = await createGuild(app, '투표 목록 길드', 'voteowner');
     const member = await joinGuild(app, owner.guildId, 'MEMBER', 'votemember');
     const todaySpawn = seoulDayStart() + 10 * 3_600_000;
-    const tomorrowSpawn = seoulDayStart(1) + 11 * 3_600_000;
+    const tomorrowSpawn = todaySpawn + 12 * 3_600_000;
     const manualSpawn = seoulDayStart() + 12 * 3_600_000;
 
     expect((await saveTarget(app, owner.token)).statusCode).toBe(200);
     expect((await saveSchedule(app, owner.token, todaySpawn)).statusCode).toBe(200);
-    expect((await saveSchedule(app, owner.token, tomorrowSpawn)).statusCode).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/schedules/mung',
+          headers: auth(owner.token),
+          payload: { ...bossKey, currentSpawnTime: todaySpawn },
+        })
+      ).statusCode,
+    ).toBe(200);
     const manual = await createManualVote(app, owner.token, manualSpawn);
     expect(manual.statusCode).toBe(200);
     const manualId = (manual.json() as { id: number }).id;
@@ -176,6 +185,178 @@ describe('boss vote routes', () => {
       headers: auth(owner.token),
     });
     expect((v1.json() as { data: unknown[] }).data).toHaveLength(3);
+  });
+
+  it('moves a corrected vote with participants, supports retries and undo, and hides it on deletion', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, '시간 수정 길드', 'timeowner');
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'timemember');
+    const spawnTime = seoulDayStart() + 10 * 3_600_000;
+    const changedTime = spawnTime + 62_922;
+    const key = (time: number) => `${bossKey.type}|${bossKey.region}|${bossKey.boss}|${time}`;
+    const list = async () =>
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/vote-bosses',
+          headers: auth(member.token),
+        })
+      ).json() as Array<{ id: number; voteKey: string }>;
+    await saveTarget(app, owner.token);
+    await saveSchedule(app, owner.token, spawnTime);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/vote-participants/${encodeURIComponent(key(spawnTime))}`,
+          headers: auth(member.token),
+          payload: { boss: bossKey.boss, spawnTime },
+        })
+      ).json(),
+    ).toEqual({ joined: true });
+    for (const time of [changedTime, changedTime, spawnTime, changedTime]) {
+      expect((await saveSchedule(app, member.token, time)).statusCode).toBe(200);
+      expect(await list()).toEqual([
+        expect.objectContaining({
+          voteKey: key(time),
+          spawnTime: time,
+          joined: true,
+          participantCount: 1,
+          isHistory: false,
+          participants: [{ userId: member.userId, nickname: 'timemember' }],
+        }),
+      ]);
+    }
+    const stale = await app.inject({
+      method: 'POST',
+      url: `/api/vote-participants/${encodeURIComponent(key(spawnTime))}`,
+      headers: auth(member.token),
+      payload: { boss: bossKey.boss, spawnTime },
+    });
+    expect(stale.statusCode).toBe(404);
+    // A failure after participant movement must restore the entire occurrence.
+    app.db.exec(`CREATE TEMP TRIGGER reject_corrected_schedule BEFORE INSERT ON boss_schedules
+      BEGIN SELECT RAISE(ABORT, 'test schedule insert failure'); END;`);
+    expect((await saveSchedule(app, member.token, changedTime + 1)).statusCode).toBe(500);
+    app.db.exec('DROP TRIGGER reject_corrected_schedule');
+    expect(await list()).toEqual([
+      expect.objectContaining({
+        voteKey: key(changedTime),
+        participantCount: 1,
+        joined: true,
+      }),
+    ]);
+    const month = new Date(spawnTime + 9 * 3_600_000).toISOString().slice(0, 7);
+    const stats = async () =>
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/vote-stats?month=${month}`,
+          headers: auth(owner.token),
+        })
+      ).json();
+    expect(await stats()).toMatchObject({ totalBosses: 1, totalParticipants: 1 });
+    const [vote] = await list();
+    expect(
+      (
+        await app.inject({
+          method: 'DELETE',
+          url: `/api/v1/schedules/${vote?.id}`,
+          headers: auth(member.token),
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(await list()).toEqual([]);
+    expect(await stats()).toMatchObject({ totalBosses: 0, totalParticipants: 0 });
+    expect(
+      app.db
+        .prepare('SELECT COUNT(*) AS count FROM boss_participants WHERE guild_id = ?')
+        .get(owner.guildId),
+    ).toEqual({ count: 1 });
+    expect(
+      app.db
+        .prepare('SELECT COUNT(*) AS count FROM schedule_history WHERE guild_id = ?')
+        .get(owner.guildId),
+    ).toEqual({ count: 2 });
+  });
+
+  it('keeps cut/mung votes and closed state, rejects collisions, and resets only current votes', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, '이력 유지 길드', 'historyowner');
+    const other = await createGuild(app, '다른 이력 길드', 'historyother');
+    const spawnTime = seoulDayStart() + 3_600_000;
+    for (const guild of [owner, other]) {
+      await saveTarget(app, guild.token);
+      await saveSchedule(app, guild.token, spawnTime);
+    }
+    const key = (time: number) => `${bossKey.type}|${bossKey.region}|${bossKey.boss}|${time}`;
+    app.db
+      .prepare(
+        `INSERT INTO participation_states (guild_id, vote_key, spawn_time, state, updated_by)
+      VALUES (?, ?, ?, 'INACTIVE', ?)`,
+      )
+      .run(owner.guildId, key(spawnTime), spawnTime, owner.userId);
+    const corrected = spawnTime + 60_000;
+    expect((await saveSchedule(app, owner.token, corrected)).statusCode).toBe(200);
+    const list = async (token = owner.token) =>
+      (
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/v1/boss-votes',
+            headers: auth(token),
+          })
+        ).json() as { data: Array<{ voteKey: string; isHistory: boolean }> }
+      ).data;
+    expect(await list()).toEqual([
+      expect.objectContaining({ voteKey: key(corrected), isClosed: true }),
+    ]);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/schedules/mung',
+          headers: auth(owner.token),
+          payload: { ...bossKey, currentSpawnTime: corrected },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(await list()).toEqual([
+      expect.objectContaining({ voteKey: key(corrected), isHistory: true, isClosed: true }),
+      expect.objectContaining({
+        voteKey: key(corrected + 12 * 3_600_000),
+        isHistory: false,
+        isClosed: false,
+      }),
+    ]);
+    const conflict = await saveSchedule(app, owner.token, corrected);
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ code: 'SCHEDULE_VOTE_CONFLICT' });
+    expect(await list()).toHaveLength(2);
+    const cut = await app.inject({
+      method: 'POST',
+      url: '/api/schedules/cut',
+      headers: auth(owner.token),
+      payload: bossKey,
+    });
+    expect(cut.statusCode).toBe(200);
+    expect(await list()).toHaveLength(3);
+    expect(
+      (
+        await app.inject({
+          method: 'DELETE',
+          url: '/api/schedules-all',
+          headers: auth(owner.token),
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(await list()).toEqual([
+      expect.objectContaining({ voteKey: key(corrected), isHistory: true }),
+      expect.objectContaining({ voteKey: key(corrected + 12 * 3_600_000), isHistory: true }),
+    ]);
+    expect(await list(other.token)).toEqual([
+      expect.objectContaining({ voteKey: key(spawnTime), isHistory: false }),
+    ]);
   });
 
   it('allows only database staff to create today or tomorrow manual votes and rejects duplicates', async () => {

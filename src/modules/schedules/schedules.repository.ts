@@ -103,6 +103,7 @@ export class SchedulesRepository {
           SELECT type, region, boss, spawn_time
           FROM schedule_history
           WHERE guild_id = ?
+            AND vote_hidden = 0
             AND spawn_time BETWEEN ? AND ?
             AND boss_definition_id IN (${placeholders})
           ORDER BY spawn_time ASC, id ASC
@@ -127,7 +128,13 @@ export class SchedulesRepository {
 
   public saveMany(actor: ScheduleActor, inputs: ResolvedScheduleInput[]): void {
     withTransaction(this.db, () => {
-      inputs.forEach((input) => this.replaceCurrent(actor, input, false));
+      inputs.forEach((input) => {
+        const current = this.findByDefinition(actor.guildId, input.bossDefinitionId);
+        if (current && current.spawnTime !== input.spawnTime) {
+          this.moveVote(actor, current, input);
+        }
+        this.replaceCurrent(actor, input, false);
+      });
       this.insertAudit(actor, null, 'SCHEDULES_SAVED', {
         count: inputs.length,
         schedules: inputs.map(({ type, region, boss, spawnTime }) => ({
@@ -160,6 +167,7 @@ export class SchedulesRepository {
 
   public delete(actor: ScheduleActor, schedule: BossSchedule): void {
     withTransaction(this.db, () => {
+      this.hideVote(actor.guildId, schedule);
       this.db
         .prepare('DELETE FROM boss_schedules WHERE guild_id = ? AND id = ?')
         .run(actor.guildId, schedule.id);
@@ -174,6 +182,7 @@ export class SchedulesRepository {
 
   public resetAll(actor: ScheduleActor): number {
     return withTransaction(this.db, () => {
+      this.findAll(actor.guildId).forEach((schedule) => this.hideVote(actor.guildId, schedule));
       const removed = this.db
         .prepare('DELETE FROM boss_schedules WHERE guild_id = ?')
         .run(actor.guildId).changes;
@@ -286,6 +295,79 @@ export class SchedulesRepository {
     });
   }
 
+  public hasRecordedVote(guildId: number, input: ResolvedScheduleInput): boolean {
+    const key = this.scheduleVoteKey(input);
+    return Boolean(
+      this.db
+        .prepare(
+          `
+          SELECT 1 FROM schedule_history
+          WHERE guild_id = ? AND type = ? AND region = ? AND boss = ? AND spawn_time = ?
+            AND vote_hidden = 0
+          UNION ALL SELECT 1 FROM boss_participants WHERE guild_id = ? AND vote_key = ?
+          UNION ALL SELECT 1 FROM participation_states WHERE guild_id = ? AND vote_key = ?
+          LIMIT 1
+        `,
+        )
+        .get(
+          guildId,
+          input.type,
+          input.region,
+          input.boss,
+          input.spawnTime,
+          guildId,
+          key,
+          guildId,
+          key,
+        ),
+    );
+  }
+
+  private scheduleVoteKey(
+    input: Pick<BossSchedule, 'type' | 'region' | 'boss' | 'spawnTime'>,
+  ): string {
+    return `${input.type}|${input.region}|${input.boss}|${input.spawnTime}`;
+  }
+
+  private hideVote(guildId: number, schedule: BossSchedule): void {
+    this.db
+      .prepare(
+        `
+          UPDATE schedule_history SET vote_hidden = 1
+          WHERE guild_id = ? AND type = ? AND region = ? AND boss = ? AND spawn_time = ?
+        `,
+      )
+      .run(guildId, schedule.type, schedule.region, schedule.boss, schedule.spawnTime);
+  }
+
+  private moveVote(
+    actor: ScheduleActor,
+    current: BossSchedule,
+    input: ResolvedScheduleInput,
+  ): void {
+    const previousKey = this.scheduleVoteKey(current);
+    const nextKey = this.scheduleVoteKey(input);
+    this.hideVote(actor.guildId, current);
+    this.db
+      .prepare(
+        `
+          UPDATE boss_participants SET vote_key = ?, spawn_time = ?
+          WHERE guild_id = ? AND vote_key = ?
+        `,
+      )
+      .run(nextKey, input.spawnTime, actor.guildId, previousKey);
+    this.db
+      .prepare(
+        `
+          UPDATE participation_states SET vote_key = ?, spawn_time = ?,
+            updated_by = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE guild_id = ? AND vote_key = ?
+        `,
+      )
+      .run(nextKey, input.spawnTime, actor.id, actor.guildId, previousKey);
+    this.insertAudit(actor, current.id, 'SCHEDULES_SAVED', { previousKey, nextKey });
+  }
+
   private replaceCurrent(
     actor: ScheduleActor,
     input: ResolvedScheduleInput,
@@ -304,6 +386,14 @@ export class SchedulesRepository {
         `,
       )
       .run(actor.guildId, input.bossDefinitionId, input.spawnTime, isMung ? 1 : 0, actor.id);
+    this.db
+      .prepare(
+        `
+          UPDATE schedule_history SET vote_hidden = 0
+          WHERE guild_id = ? AND type = ? AND region = ? AND boss = ? AND spawn_time = ?
+        `,
+      )
+      .run(actor.guildId, input.type, input.region, input.boss, input.spawnTime);
     return Number(result.lastInsertRowid);
   }
 

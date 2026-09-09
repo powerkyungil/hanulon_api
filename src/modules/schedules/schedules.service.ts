@@ -37,6 +37,20 @@ export class SchedulesService {
       throw new AppError('SCHEDULE_DUPLICATED', '같은 보스 일정이 중복되어 있습니다.', 409);
     }
     const resolved = inputs.map((input) => this.resolveInput(guildId, input));
+    for (const input of resolved) {
+      const current = this.repository.findByDefinition(guildId, input.bossDefinitionId);
+      if (
+        current &&
+        current.spawnTime !== input.spawnTime &&
+        this.repository.hasRecordedVote(guildId, input)
+      ) {
+        throw new AppError(
+          'SCHEDULE_VOTE_CONFLICT',
+          '변경할 시각에 기존 투표 기록이 있습니다. 다른 출현 시각을 입력해 주세요.',
+          409,
+        );
+      }
+    }
     this.repository.saveMany(actor, resolved);
   }
 
