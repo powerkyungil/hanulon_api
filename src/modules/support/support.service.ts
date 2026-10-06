@@ -1,4 +1,5 @@
 import { AppError } from '../../shared/errors/app-error';
+import type { CharacterType } from '../../shared/character-identity';
 import { SupportRepository } from './support.repository';
 import type {
   SupportActor,
@@ -20,8 +21,13 @@ export class SupportService {
     return this.repository.findRequests(guildId);
   }
 
-  public createRequest(userId: number, guildId: number, input: SupportRequestInput): number {
-    const actor = this.requireActiveActor(userId, guildId);
+  public createRequest(
+    userId: number,
+    guildId: number,
+    input: SupportRequestInput,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+  ): number {
+    const actor = this.requireActiveActor(userId, guildId, actorContext);
     const normalized: SupportRequestInput = {
       requestedTime: input.requestedTime.trim(),
       memo: input.memo.trim(),
@@ -39,8 +45,9 @@ export class SupportService {
     guildId: number,
     requestId: number,
     status: SupportRequestStatus,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
   ): void {
-    const actor = this.requireActiveActor(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
     this.requireRequestManager(actor, request);
     if (status === 'MATCHED') {
@@ -54,8 +61,13 @@ export class SupportService {
     this.repository.updateStatus(actor, request, status);
   }
 
-  public deleteRequest(userId: number, guildId: number, requestId: number): void {
-    const actor = this.requireActiveActor(userId, guildId);
+  public deleteRequest(
+    userId: number,
+    guildId: number,
+    requestId: number,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+  ): void {
+    const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
     this.requireRequestManager(actor, request);
     this.repository.deleteRequest(actor, request);
@@ -66,8 +78,9 @@ export class SupportService {
     guildId: number,
     requestId: number,
     memo: string,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
   ): number {
-    const actor = this.requireActiveActor(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
     if (request.status !== 'OPEN') {
       throw new AppError(
@@ -99,11 +112,17 @@ export class SupportService {
     guildId: number,
     requestId: number,
     applicationId: number,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
   ): void {
-    const actor = this.requireActiveActor(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
     const application = this.requireApplication(guildId, requestId, applicationId);
-    if (application.applicantId !== actor.id && !this.isManager(actor)) {
+    const deputyCharacterMismatch =
+      actor.deputyId !== undefined && application.applicantCharacterType !== actor.characterType;
+    if (
+      (application.applicantId !== actor.id || deputyCharacterMismatch) &&
+      !this.isManager(actor)
+    ) {
       throw new AppError(
         'SUPPORT_APPLICATION_CANCEL_FORBIDDEN',
         '본인 신청 또는 운영진만 취소할 수 있습니다.',
@@ -118,8 +137,9 @@ export class SupportService {
     guildId: number,
     requestId: number,
     applicationId: number,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
   ): void {
-    const actor = this.requireActiveActor(userId, guildId);
+    const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
     this.requireRequestManager(actor, request);
     if (request.status !== 'OPEN' && request.status !== 'MATCHED') {
@@ -136,12 +156,18 @@ export class SupportService {
     this.repository.selectApplication(actor, request, application);
   }
 
-  private requireActiveActor(userId: number, guildId: number): SupportActor {
+  private requireActiveActor(
+    userId: number,
+    guildId: number,
+    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+  ): SupportActor {
     const actor = this.repository.findActor(userId, guildId);
     if (!actor || !actor.isActive) {
       throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
     }
-    return actor;
+    return actorContext?.deputyId
+      ? { ...actor, ...actorContext, role: 'MEMBER' }
+      : { ...actor, ...actorContext };
   }
 
   private requireRequest(guildId: number, requestId: number): SupportRequestSummary {
@@ -165,7 +191,12 @@ export class SupportService {
   }
 
   private requireRequestManager(actor: SupportActor, request: SupportRequestSummary): void {
-    if (request.requesterId !== actor.id && !this.isManager(actor)) {
+    const deputyCharacterMismatch =
+      actor.deputyId !== undefined && request.requesterCharacterType !== actor.characterType;
+    if (
+      (request.requesterId !== actor.id || deputyCharacterMismatch) &&
+      !this.isManager(actor)
+    ) {
       throw new AppError(
         'SUPPORT_REQUEST_MANAGE_FORBIDDEN',
         '요청자 또는 운영진만 이 작업을 수행할 수 있습니다.',

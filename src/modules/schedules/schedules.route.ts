@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { API_PREFIX } from '../../config/constants';
 import { AppError } from '../../shared/errors/app-error';
+import { requestIdentity, resolveCharacterKey } from '../../shared/request-identity';
 import { success } from '../../shared/http/response';
 import { BossesRepository } from '../bosses/bosses.repository';
 import { BossesService } from '../bosses/bosses.service';
@@ -305,12 +306,15 @@ export const registerScheduleRoutes = async (
         response: { 200: style === 'v1' ? v1ToggleResponseSchema : legacyToggleResponseSchema },
       },
       handler: async (request, reply) => {
-        const identity = identityFromRequest(request);
+        const identity = requestIdentity(request);
         const body = request.body as ParticipationToggleBody;
         const joined = service.toggleParticipation(identity.userId, identity.guildId, {
           ...body,
+          characterKey: resolveCharacterKey(identity, body.characterKey),
           boss: (request.params as ParticipantParams).boss,
-        });
+        }, identity.accountType === 'DEPUTY'
+          ? { deputyId: identity.accountId, actorNickname: identity.accountNickname }
+          : undefined);
         return reply.send(style === 'v1' ? success({ joined }) : { joined });
       },
     });

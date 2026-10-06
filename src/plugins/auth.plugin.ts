@@ -8,14 +8,67 @@ import { AppError } from '../shared/errors/app-error';
 export interface AuthenticatedUser {
   sub: string;
   guildId: number;
-  role: 'MASTER' | 'ADMIN' | 'MEMBER';
+  role: 'MASTER' | 'ADMIN' | 'MEMBER' | 'DEPUTY';
   username: string;
   nickname: string;
+  principalType?: 'USER' | 'DEPUTY';
+  principalId?: number;
+  tokenVersion?: number;
+  activeCharacterKey?: string | null;
+  activeCharacterOwnerUserId?: number | null;
+  activeCharacterType?: 'MAIN' | 'ALTERNATE' | null;
+  activeCharacterName?: string | null;
 }
 
 interface LegacyAuthenticatedUser extends Partial<AuthenticatedUser> {
   id?: number;
 }
+
+interface DeputyAccountAuthRow {
+  id: number;
+  guild_id: number;
+  username: string;
+  nickname: string;
+  is_active: number;
+  active_character_key: string | null;
+  token_version: number;
+}
+
+const isDeputyRouteAllowed = (method: string, rawUrl: string): boolean => {
+  const path = rawUrl.split('?')[0];
+  if (path === '/api/v1/deputy/characters' || path === '/api/v1/deputy/active-character') {
+    return method === 'GET' || (path.endsWith('/active-character') && method === 'PUT');
+  }
+
+  if (path === '/api/v1/schedules' || path === '/api/schedules') return method === 'GET';
+  if (
+    path === '/api/v1/participants' ||
+    path === '/api/participants' ||
+    path === '/api/v1/participation-targets' ||
+    path === '/api/participation-targets' ||
+    path === '/api/v1/participation-states' ||
+    path === '/api/participation-states'
+  ) {
+    return method === 'GET';
+  }
+  if (/^\/api\/v1\/participants\/[^/]+$/.test(path)) return method === 'PUT';
+  if (/^\/api\/participants\/[^/]+$/.test(path)) return method === 'POST';
+  if (path === '/api/v1/boss-votes' || path === '/api/vote-bosses') return method === 'GET';
+  if (/^\/api\/v1\/boss-votes\/[^/]+\/participation$/.test(path)) return method === 'PUT';
+  if (/^\/api\/vote-participants\/[^/]+$/.test(path)) return method === 'POST';
+  if (path === '/api/v1/support-requests' || path === '/api/support-requests') {
+    return method === 'GET' || method === 'POST';
+  }
+  if (
+    /^\/api\/(?:v1\/)?support-requests\/\d+(?:\/applications(?:\/\d+)?|\/select\/\d+|\/status)?$/.test(
+      path,
+    )
+  ) {
+    return ['POST', 'DELETE', 'PUT'].includes(method);
+  }
+  if (path === '/api/v1/content-groups' || path === '/api/groups') return method === 'GET';
+  return false;
+};
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -42,11 +95,105 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
 
   const normalizeUser = (request: FastifyRequest): void => {
     const payload = request.user as LegacyAuthenticatedUser;
-    const userId = Number(payload.sub ?? payload.id);
-    if (!Number.isSafeInteger(userId) || userId < 1) {
+    const isDeputy = payload.principalType === 'DEPUTY';
+    const principalId = Number(payload.sub ?? payload.id);
+    if (!Number.isSafeInteger(principalId) || principalId < 1) {
       throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
     }
-    const currentUser = repository.findUserById(userId);
+
+    if (isDeputy) {
+      const account = app.db
+        .prepare(
+          `
+            SELECT id, guild_id, username, nickname, is_active, active_character_key, token_version
+            FROM deputy_accounts
+            WHERE id = ?
+            LIMIT 1
+          `,
+        )
+        .get(principalId) as DeputyAccountAuthRow | undefined;
+      if (
+        !account ||
+        account.is_active !== 1 ||
+        payload.tokenVersion !== account.token_version
+      ) {
+        throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
+      }
+
+      let activeCharacterOwnerUserId: number | null = null;
+      let activeCharacterType: 'MAIN' | 'ALTERNATE' | null = null;
+      let activeCharacterName: string | null = null;
+      const characterMatch = /^(MAIN|ALTERNATE):([1-9]\d*)$/.exec(
+        account.active_character_key ?? '',
+      );
+      const ownerUserId = Number(characterMatch?.[2]);
+      if (characterMatch && Number.isSafeInteger(ownerUserId)) {
+        const character =
+          characterMatch[1] === 'MAIN'
+            ? (app.db
+                .prepare(
+                  `
+                    SELECT u.id, u.nickname AS character_name
+                    FROM users AS u
+                    WHERE u.id = ? AND u.guild_id = ? AND u.is_active = 1
+                    LIMIT 1
+                  `,
+                )
+                .get(ownerUserId, account.guild_id) as
+                | { id: number; character_name: string }
+                | undefined)
+            : (app.db
+                .prepare(
+                  `
+                    SELECT u.id, ac.character_name
+                    FROM alternate_characters AS ac
+                    JOIN users AS u ON u.id = ac.user_id
+                    WHERE u.id = ? AND u.guild_id = ? AND u.is_active = 1
+                    LIMIT 1
+                  `,
+                )
+                .get(ownerUserId, account.guild_id) as
+                | { id: number; character_name: string }
+                | undefined);
+        if (character) {
+          activeCharacterOwnerUserId = character.id;
+          activeCharacterType = characterMatch[1] as 'MAIN' | 'ALTERNATE';
+          activeCharacterName = character.character_name;
+        }
+      }
+
+      if (!isDeputyRouteAllowed(request.method, request.url)) {
+        throw new AppError('DEPUTY_FEATURE_FORBIDDEN', '부주 계정으로 사용할 수 없는 기능입니다.', 403);
+      }
+      if (
+        !activeCharacterOwnerUserId &&
+        request.url.split('?')[0] !== '/api/v1/deputy/characters' &&
+        request.url.split('?')[0] !== '/api/v1/deputy/active-character'
+      ) {
+        throw new AppError(
+          'DEPUTY_CHARACTER_REQUIRED',
+          '기능을 이용하기 전에 참여할 캐릭터를 선택해 주세요.',
+          409,
+        );
+      }
+
+      request.user = {
+        sub: String(activeCharacterOwnerUserId ?? 0),
+        guildId: account.guild_id,
+        role: 'DEPUTY',
+        username: account.username,
+        nickname: account.nickname,
+        principalType: 'DEPUTY',
+        principalId: account.id,
+        activeCharacterKey: activeCharacterOwnerUserId ? account.active_character_key : null,
+        activeCharacterOwnerUserId,
+        activeCharacterType,
+        activeCharacterName,
+      };
+      return;
+    }
+
+    const currentUser = repository.findUserById(principalId);
     if (!currentUser || !currentUser.isActive) {
       throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
     }
@@ -56,6 +203,8 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
       role: currentUser.role,
       username: currentUser.username,
       nickname: currentUser.nickname,
+      principalType: 'USER',
+      principalId: currentUser.id,
     };
   };
 

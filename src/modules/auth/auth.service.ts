@@ -30,7 +30,7 @@ export class AuthService {
     const normalized = this.normalizeRegistration(input);
     this.validateRegistration(normalized);
 
-    if (this.repository.findUserByUsername(normalized.username)) {
+    if (this.repository.usernameExists(normalized.username)) {
       throw new AppError('USERNAME_EXISTS', '이미 사용 중인 아이디입니다.', 409);
     }
 
@@ -82,6 +82,9 @@ export class AuthService {
         throw new AppError('USERNAME_EXISTS', '이미 사용 중인 아이디입니다.', 409);
       }
       if (isConstraintError(error, 'idx_users_username_nocase')) {
+        throw new AppError('USERNAME_EXISTS', '이미 사용 중인 아이디입니다.', 409);
+      }
+      if (isConstraintError(error, 'USERNAME_EXISTS')) {
         throw new AppError('USERNAME_EXISTS', '이미 사용 중인 아이디입니다.', 409);
       }
       if (isConstraintError(error, 'guilds.name')) {

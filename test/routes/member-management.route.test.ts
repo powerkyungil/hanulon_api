@@ -217,7 +217,7 @@ describe('member list and management routes', () => {
 
     const response = await app.inject({
       method: 'PUT',
-      url: `/api/admin/users/${member.userId}/reset-password`,
+      url: `/api/v1/members/${member.userId}/password-reset`,
       headers: { authorization: `Bearer ${owner.token}` },
     });
     expect(response.statusCode).toBe(204);

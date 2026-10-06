@@ -34,6 +34,7 @@ const issueSession = (app: FastifyInstance, user: AuthUser): AuthSession => {
     role: user.role,
     username: user.username,
     nickname: user.nickname,
+    principalType: 'USER',
   });
 
   return {

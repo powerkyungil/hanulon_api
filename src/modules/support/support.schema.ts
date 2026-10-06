@@ -1,5 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 
+const characterTypeSchema = Type.Union([Type.Literal('MAIN'), Type.Literal('ALTERNATE')]);
+
 const requestStatusSchema = Type.Union([
   Type.Literal('OPEN'),
   Type.Literal('MATCHED'),
@@ -12,6 +14,7 @@ const v1ApplicationSchema = Type.Object({
   id: Type.Integer({ minimum: 1 }),
   requestId: Type.Integer({ minimum: 1 }),
   applicantId: Type.Integer({ minimum: 1 }),
+  applicantCharacterType: characterTypeSchema,
   memo: Type.String(),
   status: applicationStatusSchema,
   createdAt: Type.Integer({ minimum: 0 }),
@@ -25,6 +28,7 @@ const legacyApplicationSchema = Type.Object({
   id: Type.Integer({ minimum: 1 }),
   requestId: Type.Integer({ minimum: 1 }),
   applicantId: Type.Integer({ minimum: 1 }),
+  applicantCharacterType: characterTypeSchema,
   memo: Type.String(),
   status: applicationStatusSchema,
   createdAt: Type.String(),
@@ -37,6 +41,7 @@ const legacyApplicationSchema = Type.Object({
 const v1RequestSchema = Type.Object({
   id: Type.Integer({ minimum: 1 }),
   requesterId: Type.Integer({ minimum: 1 }),
+  requesterCharacterType: characterTypeSchema,
   requestedTime: Type.String(),
   memo: Type.String(),
   status: requestStatusSchema,
@@ -53,6 +58,7 @@ const v1RequestSchema = Type.Object({
 const legacyRequestSchema = Type.Object({
   id: Type.Integer({ minimum: 1 }),
   requesterId: Type.Integer({ minimum: 1 }),
+  requesterCharacterType: characterTypeSchema,
   requestedTime: Type.String(),
   memo: Type.String(),
   status: requestStatusSchema,

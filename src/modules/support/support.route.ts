@@ -1,7 +1,7 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 
 import { API_PREFIX } from '../../config/constants';
-import { AppError } from '../../shared/errors/app-error';
+import { requestIdentity } from '../../shared/request-identity';
 import { success } from '../../shared/http/response';
 import { SupportRepository } from './support.repository';
 import {
@@ -33,23 +33,21 @@ interface SupportRouteConfig {
 
 const routeConfig = (responseStyle: ResponseStyle): SupportRouteConfig => ({ responseStyle });
 
-const identityFromRequest = (request: FastifyRequest): { userId: number; guildId: number } => {
-  const userId = Number(request.user.sub);
-  const guildId = request.user.guildId;
-  if (
-    !Number.isSafeInteger(userId) ||
-    userId < 1 ||
-    !Number.isSafeInteger(guildId) ||
-    guildId < 1
-  ) {
-    throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
-  }
-  return { userId, guildId };
-};
+const identityFromRequest = requestIdentity;
+
+const actorContext = (identity: ReturnType<typeof requestIdentity>) =>
+  identity.accountType === 'DEPUTY'
+    ? {
+        deputyId: identity.accountId,
+        actorNickname: identity.accountNickname,
+        characterType: identity.activeCharacterType ?? 'MAIN',
+      }
+    : undefined;
 
 const toV1Request = (request: SupportRequest) => ({
   id: request.id,
   requesterId: request.requesterId,
+  requesterCharacterType: request.requesterCharacterType,
   requestedTime: request.requestedTime,
   memo: request.memo,
   status: request.status,
@@ -64,6 +62,7 @@ const toV1Request = (request: SupportRequest) => ({
     id: application.id,
     requestId: application.requestId,
     applicantId: application.applicantId,
+    applicantCharacterType: application.applicantCharacterType,
     memo: application.memo,
     status: application.status,
     createdAt: application.createdAt,
@@ -82,6 +81,7 @@ const toLegacyRequest = (request: SupportRequest) => ({
     id: application.id,
     requestId: application.requestId,
     applicantId: application.applicantId,
+    applicantCharacterType: application.applicantCharacterType,
     memo: application.memo,
     status: application.status,
     createdAt: new Date(application.createdAt).toISOString(),
@@ -147,7 +147,7 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
         const id = service.createRequest(identity.userId, identity.guildId, {
           requestedTime: body.requestedTime,
           memo: body.memo ?? '',
-        });
+        }, actorContext(identity));
         return responseStyle === 'v1'
           ? reply.code(201).send(success({ id }))
           : reply.send({ success: true, id });
@@ -170,7 +170,13 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
         const identity = identityFromRequest(request);
         const params = request.params as SupportRequestParams;
         const body = request.body as SupportStatusBody;
-        service.updateStatus(identity.userId, identity.guildId, params.id, body.status);
+        service.updateStatus(
+          identity.userId,
+          identity.guildId,
+          params.id,
+          body.status,
+          actorContext(identity),
+        );
         return responseStyle === 'v1' ? reply.code(204).send() : reply.send({ success: true });
       },
     );
@@ -189,7 +195,7 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
       async (request, reply) => {
         const identity = identityFromRequest(request);
         const params = request.params as SupportRequestParams;
-        service.deleteRequest(identity.userId, identity.guildId, params.id);
+        service.deleteRequest(identity.userId, identity.guildId, params.id, actorContext(identity));
         return responseStyle === 'v1' ? reply.code(204).send() : reply.send({ success: true });
       },
     );
@@ -218,6 +224,7 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
           identity.guildId,
           params.id,
           body.memo ?? '',
+          actorContext(identity),
         );
         return responseStyle === 'v1'
           ? reply.code(201).send(success({ id }))
@@ -244,6 +251,7 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
           identity.guildId,
           params.requestId,
           params.applicationId,
+          actorContext(identity),
         );
         return responseStyle === 'v1' ? reply.code(204).send() : reply.send({ success: true });
       },
@@ -268,6 +276,7 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
           identity.guildId,
           params.requestId,
           params.applicationId,
+          actorContext(identity),
         );
         return responseStyle === 'v1' ? reply.code(204).send() : reply.send({ success: true });
       },

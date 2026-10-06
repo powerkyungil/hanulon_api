@@ -1,4 +1,5 @@
 import { AppError } from '../../shared/errors/app-error';
+import { makeCharacterKey } from '../../shared/character-identity';
 import { SchedulesService } from '../schedules/schedules.service';
 import { BossVotesRepository } from './boss-votes.repository';
 import type {
@@ -19,10 +20,21 @@ export class BossVotesService {
     private readonly schedulesService: SchedulesService,
   ) {}
 
-  public getVotes(userId: number, guildId: number): VoteBoss[] {
+  public getVotes(userId: number, guildId: number, characterKey?: string): VoteBoss[] {
     this.requireActiveActor(userId, guildId);
     const window = this.listWindow();
-    return this.getVotesForRange(userId, guildId, window.startMs, window.endMs, true);
+    const joinedCharacterKey = characterKey ?? makeCharacterKey('MAIN', userId);
+    if (!this.repository.hasCharacter(guildId, joinedCharacterKey)) {
+      throw new AppError('CHARACTER_NOT_FOUND', '투표할 캐릭터를 찾을 수 없습니다.', 404);
+    }
+    return this.getVotesForRange(
+      userId,
+      guildId,
+      window.startMs,
+      window.endMs,
+      true,
+      joinedCharacterKey,
+    );
   }
 
   public deleteManualVote(userId: number, guildId: number, id: number): void {
@@ -30,6 +42,43 @@ export class BossVotesService {
     const vote = this.repository.findManualVote(guildId, id);
     if (!vote) throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
     this.repository.deleteManualVote(actor, vote);
+  }
+
+  public deleteVote(userId: number, guildId: number, voteKey: string): void {
+    const actor = this.requireManager(userId, guildId);
+    const manualMatch = /^manual\|([1-9]\d*)$/.exec(voteKey);
+    if (manualMatch) {
+      const manualId = Number(manualMatch[1]);
+      if (!Number.isSafeInteger(manualId)) {
+        throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
+      }
+      const manualVote = this.repository.findManualVote(guildId, manualId);
+      if (!manualVote) {
+        throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
+      }
+      this.repository.deleteManualVote(actor, manualVote);
+      return;
+    }
+
+    const parts = voteKey.split('|');
+    const spawnTime = Number(parts[3]);
+    if (
+      parts.length !== 4 ||
+      !parts[0] ||
+      !parts[1] ||
+      !parts[2] ||
+      !Number.isSafeInteger(spawnTime) ||
+      spawnTime < 0
+    ) {
+      throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
+    }
+    const vote = this.getVotesForRange(userId, guildId, spawnTime, spawnTime, true).find(
+      (candidate) => candidate.voteKey === voteKey && !candidate.isManual,
+    );
+    if (!vote) {
+      throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
+    }
+    this.repository.deleteScheduledVote(actor, vote);
   }
 
   public closeVote(
@@ -90,11 +139,7 @@ export class BossVotesService {
         region: vote.region,
         isManual: vote.isManual,
         isBlessed: vote.isBlessed,
-        participants: voteParticipants.map((participant) => ({
-          userId: participant.userId,
-          nickname: participant.nickname,
-          joinedAt: participant.joinedAt,
-        })),
+        participants: voteParticipants.map((participant) => ({ ...participant })),
         participantCount: voteParticipants.length,
       };
       const day = days.get(dateKey) ?? { date: dateKey, bosses: [], totalParticipants: 0 };
@@ -150,6 +195,7 @@ export class BossVotesService {
     startMs: number,
     endMs: number,
     includeClosed: boolean,
+    joinedCharacterKey?: string,
   ): VoteBoss[] {
     const actor = this.requireActiveActor(userId, guildId);
     const scheduled = this.schedulesService.getVoteOccurrences(userId, guildId, startMs, endMs);
@@ -188,13 +234,10 @@ export class BossVotesService {
     );
     const participantRows = this.repository.findParticipantsInRange(guildId, startMs, endMs);
     const visibleKeys = new Set(visible.map((vote) => vote.voteKey));
-    const participants: Record<string, Array<{ userId: number; nickname: string }>> = {};
+    const participants: Record<string, NonNullable<VoteBoss['participants']>> = {};
     participantRows.forEach((participant) => {
       if (!visibleKeys.has(participant.voteKey)) return;
-      (participants[participant.voteKey] ??= []).push({
-        userId: participant.userId,
-        nickname: participant.nickname,
-      });
+      (participants[participant.voteKey] ??= []).push(participant);
     });
     return visible
       .map((vote) => {
@@ -203,7 +246,11 @@ export class BossVotesService {
           ...vote,
           participants: voteParticipants,
           participantCount: voteParticipants.length,
-          joined: voteParticipants.some((participant) => participant.userId === actor.id),
+          joined: voteParticipants.some(
+            (participant) =>
+              (participant.characterKey ?? makeCharacterKey('MAIN', participant.userId)) ===
+              (joinedCharacterKey ?? makeCharacterKey('MAIN', actor.id)),
+          ),
           isClosed: states[vote.voteKey] === 'INACTIVE',
         };
       })
@@ -237,9 +284,11 @@ export class BossVotesService {
     voteKey: string,
     boss: string,
     spawnTime: number,
+    characterKey = makeCharacterKey('MAIN', userId),
+    actorContext?: { deputyId?: number; actorNickname?: string },
   ): boolean {
-    const actor = this.requireActiveActor(userId, guildId);
-    const vote = this.getVotes(userId, guildId).find((item) => item.voteKey === voteKey);
+    const actor = { ...this.requireActiveActor(userId, guildId), ...actorContext };
+    const vote = this.getVotes(userId, guildId, characterKey).find((item) => item.voteKey === voteKey);
     if (!vote || vote.boss !== boss.trim() || vote.spawnTime !== spawnTime) {
       throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
     }
@@ -247,7 +296,13 @@ export class BossVotesService {
       throw new AppError('BOSS_VOTE_CLOSED', '마감된 투표에는 참여할 수 없습니다.', 409);
     }
     try {
-      return this.repository.toggleParticipation(actor, voteKey, vote.boss, vote.spawnTime);
+      return this.repository.toggleParticipation(
+        actor,
+        voteKey,
+        vote.boss,
+        vote.spawnTime,
+        characterKey,
+      );
     } catch (error) {
       if (error instanceof Error && error.message === 'BOSS_VOTE_CLOSED') {
         throw new AppError('BOSS_VOTE_CLOSED', '마감된 투표에는 참여할 수 없습니다.', 409);

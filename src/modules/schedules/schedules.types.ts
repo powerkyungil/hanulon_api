@@ -6,6 +6,8 @@ export interface ScheduleActor {
   role: UserRole;
   nickname: string;
   isActive: boolean;
+  deputyId?: number;
+  actorNickname?: string;
 }
 
 export interface BossSchedule {
@@ -30,7 +32,9 @@ export interface ResolvedScheduleInput extends ScheduleInput {
   bossDefinitionId: number;
 }
 
-export type ParticipationToggleInput = ScheduleInput;
+export interface ParticipationToggleInput extends ScheduleInput {
+  characterKey?: string;
+}
 
 export interface VoteOccurrence {
   id: number | null;

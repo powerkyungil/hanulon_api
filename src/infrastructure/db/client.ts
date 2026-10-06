@@ -4,6 +4,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import type { AppConfig } from '../../config/env';
+import { ensureDefaultMemberInvites } from './default-member-invites';
 import { runMigrations } from './migration-runner';
 
 export interface DatabaseContext {
@@ -21,6 +22,7 @@ export const openDatabase = (config: AppConfig): DatabaseContext => {
 
   const migrationsDirectory = path.resolve(__dirname, 'migrations');
   const migrationsApplied = runMigrations(db, migrationsDirectory);
+  ensureDefaultMemberInvites(db);
 
   return { db, migrationsApplied };
 };

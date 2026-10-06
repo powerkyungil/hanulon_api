@@ -131,6 +131,7 @@ odin_guild_api/
 │   │       └── clova-ocr.client.ts
 │   └── modules/
 │       ├── auth/
+│       ├── deputy-accounts/
 │       ├── guild/
 │       ├── members/
 │       ├── bosses/
@@ -141,6 +142,7 @@ odin_guild_api/
 │       ├── collections/
 │       ├── content-groups/
 │       ├── siege/
+│       ├── distributions/
 │       ├── push-notifications/
 │       └── ocr/
 ├── test/
@@ -179,21 +181,23 @@ modules/schedules/
 
 ## 6. 모듈 경계
 
-| Module           | 책임                                 | 주요 데이터                                               |
-| ---------------- | ------------------------------------ | --------------------------------------------------------- |
-| `auth`           | 로그인, 가입, JWT, 초대 token        | users, invites                                            |
-| `guild`          | 길드명, 운영 정책, 서버 시간         | guild_settings                                            |
-| `members`        | 길드원 목록, 역할, 프로필            | users, characters                                         |
-| `bosses`         | 보스 정의와 순서                     | custom_bosses                                             |
-| `schedules`      | 현재 일정, 컷·멍, 일정 입력          | boss_schedules, schedule_history                          |
-| `boss-votes`     | 투표 이벤트, 참여자, 마감·삭제, 통계 | vote_events, vote_participants, vote_states, vote_history |
-| `notices`        | 규칙, 가격표, 보스 통제              | notice_rules, price_guides, price_items, boss_controls    |
-| `support`        | 손지원 요청·신청·매칭                | support_requests, support_applications                    |
-| `collections`    | 컬렉션 정의와 V2 체크 상태           | collection_items, user_collections, excluded_members      |
-| `content-groups` | 콘텐츠 그룹과 배치                   | content_groups, group_members                             |
-| `siege`          | 공성전 참여와 다이아                 | siege_records                                             |
-| `ocr`            | OCR template 조회·이미지 분석 proxy  | 외부 API 결과, 파일 미저장                                |
-| `push-notifications` | 로그인 기기 토큰과 보스 일정 FCM 발송 | push_device_tokens, push_delivery_history              |
+| Module               | 책임                                  | 주요 데이터                                               |
+| -------------------- | ------------------------------------- | --------------------------------------------------------- |
+| `auth`               | 로그인, 가입, JWT, 초대 token         | users, invites                                            |
+| `deputy-accounts`    | 길드 공용 부주 계정, 대상 캐릭터 선택, 기능 제한 | deputy_accounts, deputy_account_audit_logs                |
+| `guild`              | 길드명, 운영 정책, 서버 시간          | guild_settings                                            |
+| `members`            | 길드원 목록, 역할, 프로필             | users, characters                                         |
+| `bosses`             | 보스 정의와 순서                      | custom_bosses                                             |
+| `schedules`          | 현재 일정, 컷·멍, 일정 입력           | boss_schedules, schedule_history                          |
+| `boss-votes`         | 투표 이벤트, 참여자, 마감·삭제, 통계  | vote_events, vote_participants, vote_states, vote_history |
+| `notices`            | 규칙, 가격표, 보스 통제               | notice_rules, price_guides, price_items, boss_controls    |
+| `support`            | 손지원 요청·신청·매칭                 | support_requests, support_applications                    |
+| `collections`        | 컬렉션 정의와 V2 체크 상태            | collection_items, user_collections, excluded_members      |
+| `content-groups`     | 콘텐츠 그룹과 배치                    | content_groups, group_members                             |
+| `siege`              | 공성전 참여와 다이아                  | siege_records                                             |
+| `distributions`      | 길드 분배 기간·길드원 스냅샷·정산     | distribution_periods, distribution_members                |
+| `ocr`                | OCR template 조회·이미지 분석 proxy   | 외부 API 결과, 파일 미저장                                |
+| `push-notifications` | 로그인 기기 토큰과 보스 일정 FCM 발송 | push_device_tokens, push_delivery_history                 |
 
 모듈 사이에서 repository를 직접 호출하지 않는다. 다른 모듈의 데이터가 필요하면 해당 모듈이 제공하는 service/query interface를 호출하고, 순환 의존성이 생기면 공통 query 또는 별도 application service로 분리한다.
 
@@ -277,6 +281,12 @@ modules/schedules/
 /api/v1/auth/register
 /api/v1/auth/me
 /api/v1/auth/invites
+/api/v1/deputy-auth/login
+/api/v1/deputy-accounts
+/api/v1/deputy-accounts/:id/password
+/api/v1/deputy-accounts/:id/active
+/api/v1/deputy/characters
+/api/v1/deputy/active-character
 /api/v1/guild/settings
 /api/v1/guild/master
 /api/v1/members
@@ -296,6 +306,7 @@ modules/schedules/
 /api/v1/participants/:boss
 /api/v1/participation-states
 /api/v1/boss-votes
+/api/v1/boss-votes/:voteKey
 /api/v1/boss-votes/manual
 /api/v1/boss-votes/:voteKey/participation
 /api/v1/vote-stats
@@ -323,6 +334,14 @@ modules/schedules/
 /api/v1/siege
 /api/v1/siege/me
 /api/v1/siege/members/:id
+/api/v1/distributions
+/api/v1/distributions/alliance-rate-tiers
+/api/v1/distributions/:id
+/api/v1/distributions/:id/members/:memberId
+/api/v1/distributions/:id/members
+/api/v1/distributions/:id/calculate
+/api/v1/distributions/:id/confirm
+/api/v1/distributions/:id/reopen
 /api/v1/ocr/templates
 /api/v1/ocr/boss-schedule
 /api/v1/push-tokens
@@ -349,6 +368,9 @@ modules/schedules/
 - 길드명 변경 시 대소문자를 구분하지 않고 전체 길드에서 중복을 검사한다.
 - 전투력 수정 허용 여부는 `guild_settings.allow_member_combat_power_edit`에 저장한다.
 - 가입 코드는 `MASTER`만 조회·발급하며 길드와 대상 역할별로 하나만 유지한다.
+- 길드 생성 transaction에서 6자리 대문자 영문·숫자 MEMBER 기본 가입 코드를 함께 발급한다. DB 전역 unique 제약과 최대 100회 충돌 재생성으로 다른 길드 코드와 겹치지 않게 한다.
+- 길드 생성 회원가입 응답은 `inviteCode`에 생성된 MEMBER 기본 코드를 포함해 클라이언트가 가입 완료 화면에 즉시 표시할 수 있게 한다. 기존 길드 가입 응답에는 이 필드가 없다.
+- 기존 길드 중 MEMBER 코드가 없는 길드는 서버 시작 시 같은 생성·충돌 재시도 규칙으로 길드별 코드를 채운다.
 - 새 가입 코드를 발급하면 같은 역할의 기존 코드는 즉시 사용할 수 없게 된다.
 - 사용자 지정 코드는 4~32자의 영문자·숫자·`_`·`-`만 허용하고 서버에서 대문자로 정규화한다.
 - legacy 설정 요청의 Discord 필드는 호환 목적으로 입력만 허용하며 저장·응답·로그에서 제외한다.
@@ -364,12 +386,11 @@ modules/schedules/
 - 일정 일괄 등록은 같은 보스 정의의 현재 일정을 교체하고 동일 요청 재시도 시 현재 일정과 이력이 중복되지 않는다.
 - 고정 일정은 Flutter가 보스 정의와 서버 시각으로 생성하므로 `boss_schedules`에 저장하지 않는다.
 - 컷은 서버 현재 시각에 서버 보스 정의의 쿨타임을 더하고, 멍은 요청 시각이 DB의 현재 일정과 일치할 때만 그 시각에 쿨타임을 더한다.
-- 일정 occurrence 스냅샷은 `schedule_history`에 보존하며 `vote_hidden`은 투표 표시 여부만 관리한다. 보존 기간과 Asia/Seoul 날짜 기준은 기존과 같다.
-- 일정 일괄 저장에서 현재 일정의 시간이 바뀌면 시간 정정으로 처리한다. 이전 occurrence를 숨기고 참여자(닉네임·참여 시각 포함)와 마감·삭제 상태를 새 `voteKey`·`spawnTime`으로 이동한다. 같은 시간 재저장은 멱등적이며, 컷·멍은 별개 occurrence를 생성해 이전 투표를 유지한다.
-- 시간 정정의 목적 시각에 표시 중인 이력, 참여자 또는 투표 상태가 있으면 `SCHEDULE_VOTE_CONFLICT`(409)로 전체 저장을 거절한다. 기록이 이동해 비어 있는 숨김 이력으로 되돌리는 정정은 허용한다.
-- 개별 일정 삭제·전체 초기화는 삭제되는 현재 occurrence만 숨긴다. 참여자·이력은 보존하고 투표 목록·통계·참여율에서 제외하며 컷·멍의 이전 occurrence는 유지한다. 현재 일정이 없는 상태에서 같은 시각을 명시적으로 재등록하면 해당 이력을 다시 표시하며 기존 참여자·마감·삭제 상태를 유지한다.
-- 일정·숨김 표시·참여자·투표 상태 변경과 감사 기록은 하나의 동기 transaction으로 반영한다. 정정 감사 기록은 이전·다음 voteKey를 함께 남긴다. 기존 이력은 migration에서 원인을 추정하여 숨기거나 합치지 않는다.
-- 참여 토글은 참여 대상으로 지정된 실제 일정 occurrence만 허용하고 `(guild_id, vote_key, user_id)`로 중복을 방지한다.
+- 일정 occurrence 스냅샷과 해당 투표 이벤트는 `schedule_history`에 보존한다. 일정 시간 변경은 기존 occurrence의 `voteKey`, 참여자, 마감 상태를 이동하거나 숨기지 않고 새 출현 시각에 별도 occurrence를 만든다. 같은 시각 재등록은 기존 occurrence를 재사용하며 컷·멍도 이전 투표를 유지한다.
+- 개별 일정 삭제·전체 초기화는 `boss_schedules`의 현재 일정 row만 삭제한다. `schedule_history`, voteKey, 참여자, 투표 상태는 유지하므로 목록·통계·참여율에서 계속 조회할 수 있다. 보스 정의 초기화도 이력과 참여 대상 설정을 삭제하지 않는다.
+- `participation_targets`는 보스 정의 ID가 아니라 `(guild_id, type, region, boss)` 식별 키로 저장한다. API는 현재 보스 정의 ID를 계속 반환하며 보스 정의 초기화 후에도 같은 식별 키에 대응하는 투표 대상을 조회한다.
+- 일정 row·투표 상태·참여자와 감사 기록 변경은 하나의 동기 transaction으로 반영한다. 일정 감사 로그는 일정 삭제·초기화를 기록하고, 투표 직접 삭제 감사 로그는 선택한 정확한 voteKey를 기록한다.
+- 참여 토글은 참여 대상으로 지정된 실제 일정 occurrence만 허용하고 `(guild_id, vote_key, user_id, character_type)`로 중복을 방지한다.
 - 일정과 보스 정의·참여 데이터는 모두 현재 `guildId`로 격리하며 전체 초기화도 다른 길드에 영향을 주지 않는다.
 - 보스·일정 mutation은 각각 `boss_audit_logs`, `schedule_audit_logs`에 기록한다.
 - Flutter의 기존 `/api/schedules`, `/api/custom-bosses`, `/api/participation-*`, `/api/participants` 경로는 compatibility route로 제공한다.
@@ -392,12 +413,34 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 - 투표 참여는 활성 길드원 모두 토글할 수 있고 `(guild_id, vote_key, user_id)` 기본키와 transaction으로 중복을 방지한다.
 - 요청의 `voteKey`, 보스명, 출현 시각은 서버가 구성한 실제 투표 occurrence와 모두 일치해야 한다.
 - `INACTIVE` 투표는 목록에 마감 상태로 반환하고 참여를 차단하며 `DELETED` 투표는 목록에서 제외한다.
-- 참여자 닉네임은 참여 시점 스냅샷으로 저장하고 현재 로그인 사용자의 `joined`는 사용자 ID로 계산한다.
+- `DELETE /api/v1/boss-votes/:voteKey`는 `MASTER`와 `ADMIN`만 호출할 수 있다. 일정 투표는 `type|region|boss|spawnTime`, 수동 투표는 `manual|<id>`인 정확한 voteKey로 식별한다. 요청 body는 없고 성공은 `204 No Content`, 존재하지 않거나 다른 길드의 투표는 `BOSS_VOTE_NOT_FOUND`(404), 권한 부족은 `FORBIDDEN`(403)이다.
+- 직접 삭제는 해당 voteKey의 참여 행만 삭제하고 투표 삭제 이력을 남긴다. 일정 투표는 현재 일정 또는 고정 일정에서 다시 노출되지 않도록 해당 voteKey를 `DELETED` 상태로 남기며, 다른 voteKey와 일정 row에는 영향을 주지 않는다. 수동 투표는 정확한 수동 이벤트 row와 연결 참여·상태를 삭제한다.
+- 참여자는 소유 회원 ID와 캐릭터 종류, 캐릭터명 스냅샷으로 저장한다. 행위자 계정 종류·ID·닉네임도 기록해 타인의 캐릭터를 대신 투표한 사람을 목록에서 식별할 수 있게 한다. 현재 로그인 사용자의 `joined`는 본인 또는 부주의 선택 캐릭터 키로 계산한다.
+- `GET /api/v1/boss-votes`는 선택적 `characterKey` query를 받아 해당 캐릭터의 `joined` 상태를 계산한다. 참여 mutation의 body에도 같은 키를 사용할 수 있으며 부주는 토큰에 설정된 캐릭터 키만 사용할 수 있다.
 - 수동 투표 등록과 참여 토글은 `boss_vote_audit_logs`에 기록하며 모든 조회·변경은 현재 `guildId`로 격리한다.
 - Flutter의 `/api/vote-bosses`, `/api/vote-bosses/manual`, `/api/vote-participants/:voteKey`는 compatibility route로 제공한다.
-- 운영진은 투표를 `INACTIVE`로 마감하고 참여자를 수동 제외할 수 있으며, 수동 투표는 명시적인 삭제 경로로 제거할 수 있다.
+- 운영진은 투표를 `INACTIVE`로 마감하고 참여자를 수동 제외할 수 있다. 기존 legacy `DELETE /api/vote-bosses/:voteKey`는 마감 API이며 body와 `{ success: true, state: "INACTIVE" }` 응답을 유지한다. 수동 투표의 legacy `DELETE /api/vote-bosses/manual/:id`도 기존 응답을 유지한다.
 - 월별 투표 참여 현황과 날짜 범위별 회원 참여율을 제공하고, 마감·삭제된 투표는 통계에서 제외한다.
 - 기존 웹의 `/api/vote-bosses/:voteKey`, `/api/vote-bosses/manual/:id`, `/api/vote-participants/:voteKey/users/:userId`, `/api/vote-stats`, `/api/vote-member-rates`는 compatibility route로 제공한다.
+
+부주 계정과 캐릭터 대리 참여는 다음 정책을 사용한다.
+
+- 부주 계정은 길드 단위로 생성하며 로그인 아이디는 일반 사용자 계정과 전역에서 중복될 수 없다. 부주 계정은 특정 캐릭터에 종속되지 않는다.
+- `POST /api/v1/deputy-auth/login`은 부주 전용 access token을 발급한다. `GET /api/v1/deputy/characters`에서 같은 길드의 활성 본캐·부캐를 확인하고 `PUT /api/v1/deputy/active-character`로 현재 행동 캐릭터를 선택한다.
+- 운영진 API는 `GET/POST /api/v1/deputy-accounts`, `PUT /api/v1/deputy-accounts/:id/password`, `PUT /api/v1/deputy-accounts/:id/active`다. 계정 비활성화와 비밀번호 변경은 기존 세션을 무효화한다.
+- 부주 접근 범위는 일정 조회·참여, 보스 투표 조회·참여, 손지원 요청·신청·매칭, 콘텐츠 그룹 조회로 한정한다. 일정·투표 설정/삭제/마감/통계 관리, 운영 메뉴, 콘텐츠 그룹 편성 변경은 금지한다.
+- 부주의 일정·투표 참여는 선택된 캐릭터의 소유 회원과 캐릭터 종류를 기록하며 행위자는 부주 계정으로 남긴다. 기능 사용 전 유효한 캐릭터 선택이 필요하다.
+- 일반 길드원은 별도 위임 등록 없이 같은 길드의 캐릭터를 대상으로 참여할 수 있다. 요청에서 `characterKey`를 생략하면 본캐이며, 지정 시 서버가 같은 길드의 활성 캐릭터인지 확인한다.
+- 투표 응답은 본인 계정이 아닌 사람이 참여를 등록한 경우 `votedBy`에 행위자 종류·ID·닉네임을 포함한다. 보스 참여 row와 감사 로그는 캐릭터 소유자와 실제 행위자를 따로 보존한다.
+- 손지원 요청·신청은 캐릭터 종류와 행위자 부주 ID를 보존한다. 부주는 자신이 선택한 캐릭터의 요청·신청에 대해서만 소유자 작업을 할 수 있고, 운영진 권한은 승계하지 않는다.
+- 콘텐츠 그룹은 현재 일반 길드원과 같은 조회 전용 범위다. 편성 및 그룹 관리 mutation은 기존 `MASTER`·`ADMIN` 정책을 유지한다.
+
+부주 계정 데이터는 다음을 기준으로 한다.
+
+- `deputy_accounts`는 길드, 로그인 아이디, bcrypt 비밀번호 해시, 활성 상태, 선택 캐릭터 키, token version을 저장한다. 계정 비밀번호 원문은 저장하지 않는다.
+- `deputy_account_audit_logs`는 운영진의 계정 생성·비밀번호 변경·활성 상태 변경과 부주의 캐릭터 선택을 행위자 사용자 또는 부주 계정으로 기록한다.
+- `boss_participants`의 기본키는 `(guild_id, vote_key, user_id, character_type)`이며 기존 참여 데이터는 본캐·본인 행위자로 migration한다.
+- `boss_vote_audit_logs`, `schedule_audit_logs`, `support_audit_logs`, `support_requests`, `support_applications`는 필요한 행위자 부주 ID를 별도로 보존한다.
 
 공지·가격표·보스 통제 API는 다음 정책을 사용한다.
 
@@ -465,15 +508,28 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 - 기록 저장과 전체 초기화는 `siege_audit_logs`에 남기며 전체 초기화 감사 정보에는 삭제 건수를 기록한다.
 - `/api/v1/siege`는 camelCase 계약을 사용하고 Flutter의 기존 `/api/siege`, `/api/admin/siege/:id` 경로는 compatibility route로 제공한다.
 
+길드원 분배 API는 다음 정책을 사용한다.
+
+- 생성·기간/길드원 입력 수정·계산·확정·재개방·초안 삭제는 현재 DB 역할이 `MASTER`인 사용자만 수행한다.
+- `MASTER`는 `DRAFT`, `CONFIRMED`를 모두 조회하고 `ADMIN`·`MEMBER`의 목록에는 `CONFIRMED`만 포함한다. 비마스터가 초안 ID를 직접 조회하면 `DISTRIBUTION_DRAFT_FORBIDDEN`(403)을 반환한다.
+- 기간 생성 시 같은 길드의 활성 사용자만 길드원 스냅샷으로 복사한다. 이후 프로필 변경·비활성·탈퇴 여부와 관계없이 해당 기간의 닉네임·직업·클래스·전투력 스냅샷을 사용한다.
+- 참여율은 nullable이며 미입력과 0을 구분한다. 연합분배율 기본값은 0, 지급 배율 기본값은 1이다.
+- 참여율/연합분배율 pool은 지원비를 먼저 차감한 기본 재원에 각 비중을 적용한다. 각 유효율은 입력값과 지급 배율의 곱이고, 분모가 0이면 해당 pool은 미분배 금액으로 남긴다.
+- 초안 입력 수정과 계산값 저장은 하나의 transaction으로 처리한다. 전체 지원비가 재원을 초과하면 `DISTRIBUTION_SUPPORT_EXCEEDS_FUND`(422)로 전부 rollback한다.
+- 확정 시 계산 결과를 `distribution_members`에 저장하고 이후 조회는 저장값만 사용한다. 재개방은 사유가 필수이며 처리자·시각·사유를 `distribution_audit_logs`에 기록한다.
+- decimal 입력은 JSON number 또는 10진 문자열을 허용하고 응답은 정밀도 손실을 피하기 위해 문자열로 반환한다. 분배 시작일·종료일은 서울 달력 기준 `YYYY-MM-DD` 문자열을 사용한다.
+- 기간별 `roundingMode`은 `NONE`, `ROUND`, `CEIL`, `FLOOR` 중 하나다. 중간 계산은 반올림하지 않고 길드원별 최종 지급 단계에만 적용하며 기본값은 `NONE`이다.
+- 원본 계산값 `finalDiamonds`와 실제 지급값 `payableDiamonds`, 개인 조정값 `roundingAdjustment`, 전체 차액 `roundingDifference`를 함께 저장·반환한다. 정수화로 생긴 전체 차액은 특정 길드원에게 자동 배정하지 않는다.
+
 ## 8. 인증·권한·보안
 
 ### 8.1 인증 흐름
 
-1. `POST /api/v1/auth/login`이 아이디·비밀번호를 검증한다.
-2. 서버가 `sub`, `role`, `username`, `nickname`, `iat`, `exp`를 포함한 access token을 발급한다.
+1. `POST /api/v1/auth/login` 또는 `POST /api/v1/deputy-auth/login`이 각 계정 저장소에서 아이디·비밀번호를 검증한다.
+2. 서버가 사용자 또는 부주 principal을 식별하는 access token을 발급한다. 부주 토큰은 계정의 `token_version`을 포함한다.
 3. Flutter는 token을 secure storage에 저장하고 `Authorization: Bearer`로 전송한다.
-4. Fastify auth plugin이 token을 검증하고 `request.user`를 만든다.
-5. route 또는 service가 `MASTER`, `ADMIN`, `MEMBER` 정책을 최종 검사한다.
+4. Fastify auth plugin이 token과 현재 DB 계정 상태를 검증하고 `request.user`를 만든다. 부주 요청은 매번 선택한 캐릭터와 활성 상태를 다시 조회한다.
+5. route 또는 service가 `MASTER`, `ADMIN`, `MEMBER` 정책을 최종 검사하고, 부주 principal은 별도의 API allowlist로 허용 기능을 제한한다.
 
 현재는 access token 7일을 기본으로 하되, refresh token이 도입되면 만료 정책과 storage 정책을 이 문서에 갱신한다.
 
@@ -485,6 +541,11 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 - 모든 쓰기 API는 로그인 여부와 역할을 서버에서 확인한다.
 - 리소스 소유권 확인이 필요한 경우 역할 검사 후 소유자·길드 범위를 추가 확인한다.
 - `MASTER` 계정 삭제·역할 변경·비밀번호 초기화는 별도 policy function을 사용한다.
+- 부주는 `users`의 역할이 아니라 길드 전체에 속한 별도 계정이다. `MASTER`·`ADMIN`만 생성·비밀번호 재설정·활성화를 할 수 있고, 부주 계정 자체에는 보스 일정·투표·손지원 매칭·콘텐츠 그룹 조회 외 API 접근을 허용하지 않는다.
+- 부주는 같은 길드의 활성 본캐 또는 부캐 하나를 선택해 행동한다. 특정 본캐와 부주 계정의 사전 위임 관계는 만들지 않으며, 부주 계정은 선택 캐릭터를 바꿀 수 있다. 선택 캐릭터 소유자의 권한은 부주에게 승계되지 않는다.
+- 부주 기능 제한은 UI가 아닌 auth plugin에서 HTTP method와 경로 allowlist로 최종 적용한다. 선택 캐릭터가 없거나 더 이상 유효하지 않으면 캐릭터 선택 외 기능 요청을 거절한다.
+- 비밀번호 재설정과 계정 활성 상태 변경은 `token_version`을 증가시켜 기존 부주 JWT를 무효화한다. 비활성화 시 선택 캐릭터도 해제한다.
+- 투표 참여 요청의 행위자 계정과 대상 캐릭터를 분리한다. 일반 길드원은 같은 길드의 모든 활성 본캐·부캐를 대상으로 투표할 수 있고, 부주는 현재 선택 캐릭터만 대상으로 할 수 있다. 참여 목록에는 대리 행위자의 계정 종류·ID·닉네임을 표시한다.
 - 일정 등록·컷·멍·투표 마감·투표 삭제·컬렉션 타인 수정은 명시적인 permission code를 문서화한다.
 
 ### 8.3 비밀값과 입력 보호
@@ -581,8 +642,8 @@ schedule_history / vote_history
 - `boss_definitions`는 길드별 보스 유형·지역·이름·쿨타임·고정 시각과 표시 순서를 저장한다.
 - `boss_definition_seed_state`는 길드별 기본 보스 생성 여부를 저장해 빈 목록의 의도치 않은 재시드를 방지한다.
 - `boss_schedules`는 보스 정의별 현재 일정 하나만 유지하고 보스 정의 삭제 시 cascade 삭제한다.
-- `schedule_history`는 일정 occurrence의 스냅샷을 보존하며 현재 일정이나 보스 정의 삭제와 cascade되지 않는다.
-- `participation_targets`는 `(guild_id, boss_definition_id)`로 보스 정의를 참조하며, `boss_participants`, `participation_states`도 모두 `guild_id`를 복합 키에 포함한다. 이름 기반 기존 대상은 정확히 하나의 정의로만 매핑해 이전한다.
+- `schedule_history`는 일정 occurrence와 투표 이벤트 스냅샷을 보존하며 현재 일정이나 보스 정의 삭제와 cascade되지 않는다. 기존 `vote_hidden` 값은 migration에서 해제하며 일정 삭제·교체 경로에서 더는 변경하지 않는다.
+- `participation_targets`는 `(guild_id, type, region, boss)`의 안정적인 보스 키를 저장하며 보스 정의 ID를 외래키로 참조하지 않는다. API 입력의 정의 ID는 service가 현재 길드 정의인지 검증하고 repository에서 안정 키로 저장한다. `boss_participants`, `participation_states`도 모두 guild ID와 정확한 voteKey로 범위를 제한한다.
 - 참여 조회는 `BOSS_HISTORY_RETENTION_DAYS` 기준 범위만 반환한다.
 
 ### 9.10 보스 참여투표 데이터
@@ -592,6 +653,7 @@ schedule_history / vote_history
 - 일정 화면 참여와 투표 화면 참여는 동일한 `boss_participants`를 사용해 어느 화면에서 토글해도 상태가 일치한다.
 - `participation_states`의 `INACTIVE`, `DELETED` 상태는 투표 목록과 참여 mutation에 동일하게 적용한다.
 - `boss_vote_audit_logs`는 수동 투표 등록·삭제, 참여 토글·수동 제외, 투표 마감·삭제의 행위자와 voteKey를 보존한다.
+- 스케줄 삭제·초기화·시간 변경은 투표 이벤트나 참여 row를 삭제·재키잉하지 않는다. 명시적 투표 직접 삭제만 선택한 voteKey의 참여를 삭제하고 투표를 숨긴다.
 
 ### 9.11 migration 규칙
 
@@ -607,7 +669,16 @@ infrastructure/db/migrations/
 - 데이터 변환이 필요한 migration은 backup과 rollback 방법을 문서에 기록한다.
 - 운영 DB에서 수동 SQL을 실행한 경우 반드시 다음 migration에 반영한다.
 
-### 9.12 계정 탈퇴 데이터
+### 9.12 길드원 분배 데이터
+
+- `distribution_periods`는 길드·기간·상태·총 재원·두 배분 비중·현금 환산율·생성/확정 행위자와 시각을 저장한다. API 정본 날짜는 `start_date_iso`, `end_date_iso`의 `YYYY-MM-DD` 값이며 이전 epoch 컬럼은 마이그레이션 호환용으로 유지한다.
+- `distribution_members`는 기간 생성 당시 사용자 ID, 닉네임, 직업, 클래스, 전투력과 수기 입력값, 지원비, 계산 결과를 저장한다. `user_id`에는 외래키를 두지 않아 사용자 탈퇴 후에도 과거 정산 스냅샷을 유지한다.
+- SQLite의 `DECIMAL` affinity가 내부적으로 binary floating point로 변환될 수 있으므로 금액·비율 컬럼은 정규화된 10진 문자열(`TEXT`)로 저장하고 repository 밖 계산은 `decimal.js` 50자리 유효 정밀도로 수행한다.
+- pool과 비중 계산은 정수 반올림하지 않는다. 각 pool의 마지막 유효 대상자에게 50자리 계산에서 발생한 극미한 잔여값을 배정해 정상 분모가 있는 pool의 원본 합계를 정확히 맞춘다.
+- 선택한 `rounding_mode`는 최종 원본 다이아에만 적용한다. `ROUND`는 `ROUND_HALF_UP`, `CEIL`은 양의 다이아 올림, `FLOOR`는 양의 다이아 절삭이고 `NONE`은 소수를 유지한다. 현금 환산 원본 `cash_amount`는 반올림 전 `final_diamonds` 기준이다.
+- `distribution_audit_logs`는 생성·기간/멤버 수정·계산·확정·재개방·삭제 작업을 기록한다. 초안 본문 삭제 후에도 감사 행은 보존한다.
+
+### 9.13 계정 탈퇴 데이터
 
 - 계정 탈퇴는 하나의 transaction에서 `users` 한 행을 삭제하고 FK `ON DELETE CASCADE`로 `characters`, `alternate_characters`, `support_requests`, `support_applications`, `user_collection_items`, `excluded_members`, `group_members`, `siege_records`, `boss_participants`의 해당 사용자 행만 삭제한다.
 - 유일한 `MASTER` 탈퇴는 transaction 안에서 `users`의 같은 `guild_id`에 다른 행이 없는지 재검증한 뒤, MASTER 계정과 `guilds` 행을 삭제한다. 길드 FK가 없는 `schedule_history`와 모든 audit log도 해당 `guild_id`로 명시 삭제하며 다른 길드 행은 변경하지 않는다.
@@ -617,7 +688,7 @@ infrastructure/db/migrations/
 - 공유 리소스 자체를 지우지 않기 위해 `notice_rules.created_by`, `price_guides.created_by`, `boss_controls.updated_by`, 다른 회원의 `siege_records.updated_by`, `boss_schedules.created_by`, `schedule_history.created_by`, `participation_states.updated_by`, `manual_boss_votes.created_by`가 탈퇴자이면 복구 불가능한 비회원 sentinel `0`으로 치환한다.
 - 애플리케이션은 IP·세션·요청 이력을 DB에 저장하지 않는다. Fastify request logger도 IP와 port를 직렬화하지 않으며 Authorization과 password 경로를 redaction한다. reverse proxy·호스팅 사업자 등 애플리케이션 외부 로그의 삭제·보존은 별도 인프라 정책으로 관리한다.
 
-### 9.13 FCM 기기 토큰과 발송 이력
+### 9.14 FCM 기기 토큰과 발송 이력
 
 - `push_device_tokens`는 사용자·길드·Android FCM 토큰·선택적 `device_id`와 마지막 확인 시각을 저장한다. 토큰은 전역 unique이며 `(user_id, device_id)`도 unique이다.
 - `push_delivery_history`는 보스 occurrence, 알림 시점(300/60/0초 전), 사용자·설치 기기 키, 상태, 시도 횟수, claim 만료·재시도·성공 시각과 안정적인 오류 코드만 저장한다.
@@ -662,9 +733,9 @@ Flutter 이미지 선택
 - `/api/v1/health/live`는 프로세스 생존만 확인한다.
 - `/api/v1/health/ready`는 DB 연결과 migration 상태까지 확인한다.
 - `SIGTERM` 수신 시 신규 요청을 받지 않고 요청·DB 작업을 정리한 뒤 종료한다.
-- 보스 푸시는 빌드 후 `npm run push:boss`를 매분 하나의 cron 항목으로 실행한다. 예: `* * * * * cd /srv/odin-guild-api && /usr/bin/npm run push:boss >> /var/log/odin-guild-push.log 2>&1`.
-- cron 환경에는 API 서버와 같은 `DB_PATH`, `JWT_SECRET` 및 `FCM_SERVICE_ACCOUNT_FILE`(또는 `FCM_SERVICE_ACCOUNT_JSON`)을 제공한다. 서비스 계정 파일은 저장소 밖에 두고 실행 계정만 읽을 수 있게 `chmod 600`을 적용한다.
-- `FCM_DISPATCH_WINDOW_SECONDS` 기본값은 90초다. cron 지연 허용 범위이며 지나치게 크게 설정하면 오래 지난 출현 알림이 발송될 수 있다.
+- 보스 푸시는 빌드 후 `ops/systemd/hanulon-boss-push.service`와 `.timer`를 설치해 약 10초 간격으로 실행한다. 표준 cron의 1분 해상도는 최대 약 59초의 발송 지연을 만들 수 있으므로 사용하지 않는다.
+- timer 작업에는 API 서버와 같은 `DB_PATH`, `JWT_SECRET` 및 `FCM_SERVICE_ACCOUNT_FILE`(또는 `FCM_SERVICE_ACCOUNT_JSON`)이 필요하다. 현재 운영 구성은 `WorkingDirectory`의 `.env`를 읽는다. 서비스 계정 파일은 저장소 밖에 두고 실행 계정만 읽을 수 있게 `chmod 600`을 적용한다.
+- `FCM_DISPATCH_WINDOW_SECONDS` 기본값은 90초다. 일시적인 timer 지연·재시작 복구 범위이며 지나치게 크게 설정하면 오래 지난 출현 알림이 발송될 수 있다.
 
 ### 11.3 로그와 모니터링
 
@@ -685,6 +756,7 @@ Flutter 이미지 선택
 - 상태 전이: OPEN → CLOSED, OPEN → DELETED
 - OCR 결과 정규화
 - 페이지·필터·정렬 조건
+- 분배 pool 정규화, 지급 배율, nullable 참여율, 지원비 차감, 0 분모와 decimal 합계
 
 ### 12.2 Route 테스트
 
@@ -692,13 +764,17 @@ Flutter 이미지 선택
 - 정상 응답 JSON schema와 오류 응답 schema를 함께 검증한다.
 - 401, 403, 404, 409, 422를 각각 고정한다.
 - token 없는 요청, 잘못된 role, 다른 사용자의 리소스 접근을 테스트한다.
+- 분배 초안 가시성, MASTER 전용 mutation, 확정 후 수정 차단, 재개방과 스냅샷 보존을 테스트한다.
+- 길드별 연합분배율 구간 설정은 모든 활성 길드원이 조회하고 `MASTER`만 변경한다. 구간은 80,000~89,999, 90,000~99,999, 100,000~104,999부터 시작해 이후 5,000 단위로 연속되어야 하며 새 분배 기간의 전투력 스냅샷에 자동 적용한다.
 
 ### 12.3 통합 테스트
 
 - 임시 SQLite 파일 또는 in-memory DB를 사용한다.
 - migration → seed → route 호출 순서로 검증한다.
 - 로그인 → 내 정보 → 일정 등록 → 투표 이벤트 생성 → 참여 → 통계 조회 흐름을 검증한다.
-- 일정 교체·삭제 후 과거 투표 이력이 보존되는지 검증한다.
+- 시간 정정·재등록에서 이전 voteKey·참여자·마감 상태가 유지되고, 같은 시각을 다시 등록해도 해당 occurrence가 재사용되며 transaction rollback이 동작하는지 검증한다.
+- 일정 단일 삭제·전체 초기화·보스 초기화와 시간 변경·재등록 후 이력·참여자 보존 및 투표 목록·통계를 검증한다.
+- 운영진의 voteKey 직접 삭제는 정확한 참여 row만 삭제하고 다른 투표를 유지하며, 권한 없는 사용자는 403을 받는지 검증한다.
 - 90일 이전 이력 cleanup과 backup 전제 조건을 검증한다.
 - OCR client는 실제 외부 API 대신 mock server를 사용한다.
 
@@ -786,26 +862,32 @@ Flutter 이미지 선택
 
 ## 15. 결정 로그
 
-| 날짜       | 결정                           | 이유                                                                                |
-| ---------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| 2026-08-10 | Node.js LTS + Fastify v5 채택  | 기존 Node 생태계와 호환하면서 Spring보다 가벼운 API 서버가 필요함                   |
-| 2026-08-10 | TypeScript strict 사용         | Flutter API 계약과 복합 도메인의 필드 오류를 줄임                                   |
-| 2026-08-10 | `/api/v1` 신규 계약 사용       | legacy 웹 API와 새 Flutter API를 분리하고 breaking change를 관리함                  |
-| 2026-08-10 | SQLite 유지                    | 단일 Micro 서버와 소규모 길드 운영에 충분하며 DB 서버를 별도로 띄우지 않음          |
-| 2026-08-10 | SQL Repository 사용            | 무거운 ORM을 피하고 migration·transaction을 직접 통제함                             |
-| 2026-08-10 | Discord·짱깸보 제외            | 새 Flutter 앱 범위에서 제외되었고 Micro 서버의 상시 작업 부담을 줄임                |
-| 2026-08-10 | 보스 이력 90일 보존            | 저장공간 제한을 고려하면서 이전 수요일 참여현황을 보존하기 위함                     |
-| 2026-08-11 | Phase 0 기반 구현 시작         | Fastify app/server 분리와 migration·health·time 계약을 먼저 고정함                  |
-| 2026-08-11 | `better-sqlite3` 채택          | 소규모 단일 서버의 짧은 prepared statement 작업을 단순하게 유지함                   |
-| 2026-08-12 | 인증·프로필·길드원 API 구현    | Flutter legacy 경로를 호환하면서 `/api/v1` 정본과 DB 기반 tenant·역할 검증을 적용함 |
-| 2026-08-12 | 마스터 설정·가입 코드 API 구현 | 역할별 단일 가입 코드와 DB 기반 권한 재검증 및 설정 변경 감사 기록을 적용함         |
-| 2026-08-12 | 공지·가격표·보스 통제 API 구현 | 길드별 데이터 격리, 운영진 권한, 전체 순서 검증과 변경 감사 기록을 적용함           |
-| 2026-08-12 | 손지원 매칭 API 구현           | 요청·신청 소유권, 명시적 상태 전이, 단일 선택 제약과 길드별 감사 기록을 적용함      |
-| 2026-08-12 | 아이템 현황 V2 API 구현        | 안정적인 item ID, 길드별 보유 상태, 역할별 수정 권한과 cascade 정책을 적용함        |
-| 2026-08-12 | 콘텐츠 참여 그룹 API 구현      | 단일 그룹 편성 제약, 운영진 권한, 길드별 멤버 검증과 감사 기록을 적용함             |
-| 2026-08-12 | 공성전 참여 API 구현           | 다이아 범위·잔여값 검증, 길드 격리, DB 기반 운영진 권한과 초기화 감사를 적용함      |
-| 2026-08-12 | 보스 일정·참여 API 구현        | occurrence 이력 보존, 서버 쿨타임 계산, 길드 격리와 참여 중복 방지를 적용함         |
-| 2026-08-12 | 보스 참여투표 API 구현         | 일정·이력·수동 투표 병합, 원자적 참여 토글, 마감 상태와 길드 격리를 적용함          |
-| 2026-08-23 | Android FCM 보스 일정 알림 구현 | 사용자 기기 토큰 API, HTTP v1 서비스 계정 인증, 5분·1분·출현 알림과 발송 중복 방지 이력을 적용함 |
+| 날짜       | 결정                              | 이유                                                                                             |
+| ---------- | --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 2026-08-10 | Node.js LTS + Fastify v5 채택     | 기존 Node 생태계와 호환하면서 Spring보다 가벼운 API 서버가 필요함                                |
+| 2026-08-10 | TypeScript strict 사용            | Flutter API 계약과 복합 도메인의 필드 오류를 줄임                                                |
+| 2026-08-10 | `/api/v1` 신규 계약 사용          | legacy 웹 API와 새 Flutter API를 분리하고 breaking change를 관리함                               |
+| 2026-08-10 | SQLite 유지                       | 단일 Micro 서버와 소규모 길드 운영에 충분하며 DB 서버를 별도로 띄우지 않음                       |
+| 2026-08-10 | SQL Repository 사용               | 무거운 ORM을 피하고 migration·transaction을 직접 통제함                                          |
+| 2026-08-10 | Discord·짱깸보 제외               | 새 Flutter 앱 범위에서 제외되었고 Micro 서버의 상시 작업 부담을 줄임                             |
+| 2026-08-10 | 보스 이력 90일 보존               | 저장공간 제한을 고려하면서 이전 수요일 참여현황을 보존하기 위함                                  |
+| 2026-08-11 | Phase 0 기반 구현 시작            | Fastify app/server 분리와 migration·health·time 계약을 먼저 고정함                               |
+| 2026-08-11 | `better-sqlite3` 채택             | 소규모 단일 서버의 짧은 prepared statement 작업을 단순하게 유지함                                |
+| 2026-08-12 | 인증·프로필·길드원 API 구현       | Flutter legacy 경로를 호환하면서 `/api/v1` 정본과 DB 기반 tenant·역할 검증을 적용함              |
+| 2026-08-12 | 마스터 설정·가입 코드 API 구현    | 역할별 단일 가입 코드와 DB 기반 권한 재검증 및 설정 변경 감사 기록을 적용함                      |
+| 2026-08-12 | 공지·가격표·보스 통제 API 구현    | 길드별 데이터 격리, 운영진 권한, 전체 순서 검증과 변경 감사 기록을 적용함                        |
+| 2026-08-12 | 손지원 매칭 API 구현              | 요청·신청 소유권, 명시적 상태 전이, 단일 선택 제약과 길드별 감사 기록을 적용함                   |
+| 2026-08-12 | 아이템 현황 V2 API 구현           | 안정적인 item ID, 길드별 보유 상태, 역할별 수정 권한과 cascade 정책을 적용함                     |
+| 2026-08-12 | 콘텐츠 참여 그룹 API 구현         | 단일 그룹 편성 제약, 운영진 권한, 길드별 멤버 검증과 감사 기록을 적용함                          |
+| 2026-08-12 | 공성전 참여 API 구현              | 다이아 범위·잔여값 검증, 길드 격리, DB 기반 운영진 권한과 초기화 감사를 적용함                   |
+| 2026-08-12 | 보스 일정·참여 API 구현           | occurrence 이력 보존, 서버 쿨타임 계산, 길드 격리와 참여 중복 방지를 적용함                      |
+| 2026-08-12 | 보스 참여투표 API 구현            | 일정·이력·수동 투표 병합, 원자적 참여 토글, 마감 상태와 길드 격리를 적용함                       |
+| 2026-08-23 | Android FCM 보스 일정 알림 구현   | 사용자 기기 토큰 API, HTTP v1 서비스 계정 인증, 5분·1분·출현 알림과 발송 중복 방지 이력을 적용함 |
+| 2026-08-24 | 길드원 분배 API 구현              | 50/50 정규화, 정확한 decimal 계산, 확정 스냅샷, MASTER 전용 상태 전이와 감사 이력을 적용함       |
+| 2026-08-24 | 최종 지급 다이아 반올림 선택 추가 | 원본 계산을 보존하면서 소수 유지·반올림·올림·절삭 실제 지급값과 전체 차액을 함께 제공함          |
+| 2026-08-24 | 길드별 연합분배율 구간 설정 추가 | 전투력 구간별 기본 연합분배율을 영구 저장하고 새 분배 스냅샷에 일관되게 자동 적용하기 위함       |
+| 2026-08-24 | 엑셀 재원 입력·합산 계약 반영 | 공성 다이아·길드 현금·스크롤 제작·즉시부활을 기간별로 저장하고 전체 재원·지원비 차감 재원·현금 환산 합계를 서버에서 계산하기 위함 |
+| 2026-09-17 | 일정 occurrence와 투표 삭제 경계 분리 | 일정 삭제·초기화·정정이 투표 이력과 참여를 숨기거나 이동하지 않도록 하고, 운영진의 정확한 voteKey 직접 삭제만 참여 기록을 제거하도록 함 |
+| 2026-10-05 | 길드 공용 부주 계정과 캐릭터별 대리 참여 | 캐릭터 위임 등록 없이 길드원이 대리 투표할 수 있게 하고, 부주 계정은 선택 캐릭터만 제한 기능에서 사용하며 행위자를 별도 기록함 |
 
 새로운 기술 선택이나 기존 결정을 뒤집는 변경은 이 표에 날짜·대안·선택 이유를 추가한다.

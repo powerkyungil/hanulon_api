@@ -5,6 +5,15 @@ const spawnTimeSchema = Type.Integer({ minimum: 0, maximum: 8_640_000_000_000_00
 const participantSchema = Type.Object({
   userId: Type.Integer({ minimum: 1 }),
   nickname: Type.String(),
+  characterType: Type.Optional(Type.Union([Type.Literal('MAIN'), Type.Literal('ALTERNATE')])),
+  characterKey: Type.Optional(Type.String({ pattern: '^(MAIN|ALTERNATE):[1-9]\\d*$' })),
+  votedBy: Type.Optional(
+    Type.Object({
+      accountType: Type.Union([Type.Literal('USER'), Type.Literal('DEPUTY')]),
+      accountId: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+      nickname: Type.String(),
+    }),
+  ),
 });
 const voteSchema = Type.Object({
   id: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
@@ -37,8 +46,16 @@ export const voteParamsSchema = Type.Object(
   { voteKey: Type.String({ minLength: 1, maxLength: 500 }) },
   { additionalProperties: false },
 );
+export const voteListQuerySchema = Type.Object(
+  { characterKey: Type.Optional(Type.String({ pattern: '^(MAIN|ALTERNATE):[1-9]\\d*$' })) },
+  { additionalProperties: false },
+);
 export const voteToggleBodySchema = Type.Object(
-  { boss: nameSchema, spawnTime: spawnTimeSchema },
+  {
+    boss: nameSchema,
+    spawnTime: spawnTimeSchema,
+    characterKey: Type.Optional(Type.String({ pattern: '^(MAIN|ALTERNATE):[1-9]\\d*$' })),
+  },
   { additionalProperties: false },
 );
 export const manualVoteParamsSchema = Type.Object(
@@ -82,6 +99,7 @@ export const v1CreatedResponseSchema = Type.Object({
 });
 export const legacyToggleResponseSchema = Type.Object({ joined: Type.Boolean() });
 export const legacySuccessResponseSchema = Type.Object({ success: Type.Literal(true) });
+export const noContentResponseSchema = Type.Null();
 export const legacyClosedResponseSchema = Type.Object({
   success: Type.Literal(true),
   state: Type.Literal('INACTIVE'),
@@ -92,6 +110,7 @@ export const v1ToggleResponseSchema = Type.Object({
 
 export type ManualVoteBody = Static<typeof manualVoteBodySchema>;
 export type VoteParams = Static<typeof voteParamsSchema>;
+export type VoteListQuery = Static<typeof voteListQuerySchema>;
 export type VoteToggleBody = Static<typeof voteToggleBodySchema>;
 export type ManualVoteParams = Static<typeof manualVoteParamsSchema>;
 export type VoteCloseBody = Static<typeof voteCloseBodySchema>;

@@ -47,9 +47,15 @@ describe('auth routes', () => {
 
     expect(registerResponse.statusCode).toBe(201);
     const registrationBody = registerResponse.json() as {
-      data: { userId: number; guildId: number; role: string };
+      data: { userId: number; guildId: number; role: string; inviteCode: string };
     };
     expect(registrationBody.data.role).toBe('MASTER');
+    expect(registrationBody.data.inviteCode).toMatch(/^[A-Z0-9]{6}$/);
+    expect(
+      app.db
+        .prepare("SELECT code FROM invites WHERE guild_id = ? AND role = 'MEMBER'")
+        .get(registrationBody.data.guildId),
+    ).toEqual({ code: registrationBody.data.inviteCode });
 
     const storedUser = app.db
       .prepare('SELECT guild_id, role, password_hash FROM users WHERE id = ?')
@@ -114,6 +120,10 @@ describe('auth routes', () => {
       },
     });
     expect(registerResponse.statusCode).toBe(201);
+    expect(registerResponse.json()).toMatchObject({
+      role: 'MASTER',
+      inviteCode: expect.stringMatching(/^[A-Z0-9]{6}$/),
+    });
 
     const loginResponse = await app.inject({
       method: 'POST',
@@ -225,7 +235,13 @@ describe('auth routes', () => {
     });
     const guildId = (ownerResponse.json() as { data: { guildId: number } }).data.guildId;
     app.db
-      .prepare('INSERT INTO invites (guild_id, code, role) VALUES (?, ?, ?)')
+      .prepare(
+        `
+          INSERT INTO invites (guild_id, code, role)
+          VALUES (?, ?, ?)
+          ON CONFLICT(guild_id, role) DO UPDATE SET code = excluded.code
+        `,
+      )
       .run(guildId, 'JOIN-MEMBER', 'MEMBER');
 
     const joinResponse = await app.inject({

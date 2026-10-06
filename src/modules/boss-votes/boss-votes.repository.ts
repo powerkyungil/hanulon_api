@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 
 import { withTransaction } from '../../infrastructure/db/transaction';
+import { findCharacterIdentity, requireCharacterIdentity } from '../../shared/character-identity';
 import type { UserRole } from '../auth/auth.types';
 import type {
   ManualVote,
@@ -30,6 +31,10 @@ interface ManualVoteRow {
 
 export class BossVotesRepository {
   public constructor(private readonly db: Database.Database) {}
+
+  public hasCharacter(guildId: number, characterKey: string): boolean {
+    return findCharacterIdentity(this.db, guildId, characterKey) !== null;
+  }
 
   public findActor(userId: number, guildId: number): VoteActor | null {
     const row = this.db
@@ -135,6 +140,46 @@ export class BossVotesRepository {
     });
   }
 
+  public deleteScheduledVote(
+    actor: VoteActor,
+    vote: { voteKey: string; type: string; region: string; boss: string; spawnTime: number },
+  ): void {
+    withTransaction(this.db, () => {
+      this.db
+        .prepare('DELETE FROM boss_participants WHERE guild_id = ? AND vote_key = ?')
+        .run(actor.guildId, vote.voteKey);
+      this.db
+        .prepare(
+          `
+            DELETE FROM schedule_history
+            WHERE guild_id = ? AND type = ? AND region = ? AND boss = ? AND spawn_time = ?
+          `,
+        )
+        .run(actor.guildId, vote.type, vote.region, vote.boss, vote.spawnTime);
+      this.db
+        .prepare(
+          `
+            INSERT INTO participation_states (
+              guild_id, vote_key, spawn_time, state, updated_by, updated_at
+            )
+            VALUES (?, ?, ?, 'DELETED', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(guild_id, vote_key) DO UPDATE SET
+              spawn_time = excluded.spawn_time,
+              state = 'DELETED',
+              updated_by = excluded.updated_by,
+              updated_at = CURRENT_TIMESTAMP
+          `,
+        )
+        .run(actor.guildId, vote.voteKey, vote.spawnTime, actor.id);
+      this.insertAudit(actor, vote.voteKey, 'VOTE_DELETED', {
+        type: vote.type,
+        region: vote.region,
+        boss: vote.boss,
+        spawnTime: vote.spawnTime,
+      });
+    });
+  }
+
   public setVoteState(
     actor: VoteActor,
     voteKey: string,
@@ -226,7 +271,8 @@ export class BossVotesRepository {
     const rows = this.db
       .prepare(
         `
-          SELECT vote_key, user_id, nickname_snapshot
+          SELECT vote_key, user_id, character_type, nickname_snapshot,
+            actor_type, actor_id, actor_nickname_snapshot
           FROM boss_participants
           WHERE guild_id = ? AND vote_key IN (${placeholders})
           ORDER BY created_at ASC, user_id ASC
@@ -235,13 +281,32 @@ export class BossVotesRepository {
       .all(guildId, ...voteKeys) as Array<{
       vote_key: string;
       user_id: number;
+      character_type: 'MAIN' | 'ALTERNATE';
       nickname_snapshot: string;
+      actor_type: 'USER' | 'DEPUTY';
+      actor_id: number | null;
+      actor_nickname_snapshot: string;
     }>;
     const result: Record<string, VoteParticipant[]> = {};
     rows.forEach((row) => {
       (result[row.vote_key] ??= []).push({
         userId: row.user_id,
         nickname: row.nickname_snapshot,
+        ...(row.character_type === 'ALTERNATE'
+          ? {
+              characterType: row.character_type,
+              characterKey: `ALTERNATE:${row.user_id}`,
+            }
+          : {}),
+        ...(row.actor_type === 'DEPUTY' || row.actor_id !== row.user_id
+          ? {
+              votedBy: {
+                accountType: row.actor_type,
+                accountId: row.actor_id,
+                nickname: row.actor_nickname_snapshot,
+              },
+            }
+          : {}),
       });
     });
     return result;
@@ -255,7 +320,8 @@ export class BossVotesRepository {
     const rows = this.db
       .prepare(
         `
-          SELECT vote_key, user_id, nickname_snapshot, created_at
+          SELECT vote_key, user_id, character_type, nickname_snapshot,
+            actor_type, actor_id, actor_nickname_snapshot, created_at
           FROM boss_participants
           WHERE guild_id = ? AND spawn_time BETWEEN ? AND ?
           ORDER BY spawn_time ASC, created_at ASC, user_id ASC
@@ -264,7 +330,11 @@ export class BossVotesRepository {
       .all(guildId, startMs, endMs) as Array<{
       vote_key: string;
       user_id: number;
+      character_type: 'MAIN' | 'ALTERNATE';
       nickname_snapshot: string;
+      actor_type: 'USER' | 'DEPUTY';
+      actor_id: number | null;
+      actor_nickname_snapshot: string;
       created_at: string;
     }>;
     return rows.map((row) => ({
@@ -272,6 +342,21 @@ export class BossVotesRepository {
       userId: row.user_id,
       nickname: row.nickname_snapshot,
       joinedAt: row.created_at,
+      ...(row.character_type === 'ALTERNATE'
+        ? {
+            characterType: row.character_type,
+            characterKey: `ALTERNATE:${row.user_id}`,
+          }
+        : {}),
+      ...(row.actor_type === 'DEPUTY' || row.actor_id !== row.user_id
+        ? {
+            votedBy: {
+              accountType: row.actor_type,
+              accountId: row.actor_id,
+              nickname: row.actor_nickname_snapshot,
+            },
+          }
+        : {}),
     }));
   }
 
@@ -303,8 +388,10 @@ export class BossVotesRepository {
     voteKey: string,
     boss: string,
     spawnTime: number,
+    characterKey: string,
   ): boolean {
     return withTransaction(this.db, () => {
+      const character = requireCharacterIdentity(this.db, actor.guildId, characterKey);
       const state = this.db
         .prepare('SELECT state FROM participation_states WHERE guild_id = ? AND vote_key = ?')
         .get(actor.guildId, voteKey) as { state: string } | undefined;
@@ -313,29 +400,56 @@ export class BossVotesRepository {
       }
       const existing = this.db
         .prepare(
-          'SELECT 1 AS found FROM boss_participants WHERE guild_id = ? AND vote_key = ? AND user_id = ?',
+          `
+            SELECT 1 AS found
+            FROM boss_participants
+            WHERE guild_id = ? AND vote_key = ? AND user_id = ? AND character_type = ?
+          `,
         )
-        .get(actor.guildId, voteKey, actor.id) as { found: number } | undefined;
+        .get(actor.guildId, voteKey, character.ownerUserId, character.characterType) as
+        | { found: number }
+        | undefined;
       const joined = !existing;
       if (existing) {
         this.db
           .prepare(
-            'DELETE FROM boss_participants WHERE guild_id = ? AND vote_key = ? AND user_id = ?',
+            `
+              DELETE FROM boss_participants
+              WHERE guild_id = ? AND vote_key = ? AND user_id = ? AND character_type = ?
+            `,
           )
-          .run(actor.guildId, voteKey, actor.id);
+          .run(actor.guildId, voteKey, character.ownerUserId, character.characterType);
       } else {
         this.db
           .prepare(
             `
               INSERT INTO boss_participants (
-                guild_id, vote_key, boss, spawn_time, user_id, nickname_snapshot
+                guild_id, vote_key, boss, spawn_time, user_id, character_type,
+                character_name_snapshot, nickname_snapshot, actor_type, actor_id,
+                actor_nickname_snapshot
               )
-              VALUES (?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
           )
-          .run(actor.guildId, voteKey, boss, spawnTime, actor.id, actor.nickname);
+          .run(
+            actor.guildId,
+            voteKey,
+            boss,
+            spawnTime,
+            character.ownerUserId,
+            character.characterType,
+            character.characterName,
+            character.characterName,
+            actor.deputyId ? 'DEPUTY' : 'USER',
+            actor.deputyId ?? actor.id,
+            actor.actorNickname ?? actor.nickname,
+          );
       }
-      this.insertAudit(actor, voteKey, 'PARTICIPATION_TOGGLED', { joined });
+      this.insertAudit(actor, voteKey, 'PARTICIPATION_TOGGLED', {
+        joined,
+        characterKey,
+        characterName: character.characterName,
+      });
       return joined;
     });
   }
@@ -356,11 +470,18 @@ export class BossVotesRepository {
       .prepare(
         `
           INSERT INTO boss_vote_audit_logs (
-            guild_id, actor_user_id, vote_key, action, metadata_json
+            guild_id, actor_user_id, actor_deputy_id, vote_key, action, metadata_json
           )
-          VALUES (?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?)
         `,
       )
-      .run(actor.guildId, actor.id, voteKey, action, JSON.stringify(metadata));
+      .run(
+        actor.guildId,
+        actor.id,
+        actor.deputyId ?? null,
+        voteKey,
+        action,
+        JSON.stringify(metadata),
+      );
   }
 }

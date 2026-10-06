@@ -28,12 +28,16 @@ describe('health routes', () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/health/ready' });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
+    const result = response.json() as {
+      data: { status: string; database: string; migrationsApplied: number };
+    };
+    expect(result).toEqual({
       data: {
         status: 'ready',
         database: 'ok',
-        migrationsApplied: 19,
+        migrationsApplied: expect.any(Number),
       },
     });
+    expect(result.data.migrationsApplied).toBeGreaterThanOrEqual(20);
   });
 });

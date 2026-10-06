@@ -53,7 +53,13 @@ const createMasterSession = async (app: Awaited<ReturnType<typeof buildApp>>) =>
 
 const createMemberSession = async (app: Awaited<ReturnType<typeof buildApp>>, guildId: number) => {
   app.db
-    .prepare('INSERT INTO invites (guild_id, code, role) VALUES (?, ?, ?)')
+    .prepare(
+      `
+        INSERT INTO invites (guild_id, code, role)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id, role) DO UPDATE SET code = excluded.code
+      `,
+    )
     .run(guildId, 'DELETE-ME-MEMBER', 'MEMBER');
 
   const registerResponse = await app.inject({
@@ -193,7 +199,13 @@ describe('member profile routes', () => {
     const app = await createApp();
     const owner = await createMasterSession(app);
     app.db
-      .prepare('INSERT INTO invites (guild_id, code, role) VALUES (?, ?, ?)')
+      .prepare(
+        `
+          INSERT INTO invites (guild_id, code, role)
+          VALUES (?, ?, ?)
+          ON CONFLICT(guild_id, role) DO UPDATE SET code = excluded.code
+        `,
+      )
       .run(owner.guildId, 'MEMBER-1', 'MEMBER');
 
     const joinResponse = await app.inject({

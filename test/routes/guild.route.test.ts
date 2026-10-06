@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../../src/app';
+import { insertDefaultMemberInvite } from '../../src/infrastructure/db/default-member-invites';
 import { createTestConfig } from '../helpers/test-config';
 
 const openApps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
@@ -58,7 +59,13 @@ const joinGuild = async (
   username: string,
 ) => {
   app.db
-    .prepare('INSERT INTO invites (guild_id, code, role) VALUES (?, ?, ?)')
+    .prepare(
+      `
+        INSERT INTO invites (guild_id, code, role)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id, role) DO UPDATE SET code = excluded.code
+      `,
+    )
     .run(guildId, code, role);
   const response = await app.inject({
     method: 'POST',
@@ -189,6 +196,53 @@ describe('guild settings routes', () => {
 });
 
 describe('guild invite routes', () => {
+  it('regenerates a six-character code when the generated value already exists', async () => {
+    const app = await createApp();
+    const first = await createGuild(app, '충돌 코드 첫 길드', 'collisionfirst', '첫길드장');
+    const second = await createGuild(app, '충돌 코드 둘째 길드', 'collisionsecond', '둘째길드장');
+    const existingCode = (
+      app.db
+        .prepare("SELECT code FROM invites WHERE guild_id = ? AND role = 'MEMBER'")
+        .get(second.guildId) as { code: string }
+    ).code;
+    app.db.prepare("DELETE FROM invites WHERE guild_id = ? AND role = 'MEMBER'").run(first.guildId);
+    const candidates = [existingCode, 'Z9K2M7'];
+
+    const created = insertDefaultMemberInvite(app.db, first.guildId, () => candidates.shift()!);
+
+    expect(created).toBe('Z9K2M7');
+    expect(
+      app.db
+        .prepare("SELECT code FROM invites WHERE guild_id = ? AND role = 'MEMBER'")
+        .get(first.guildId),
+    ).toEqual({ code: 'Z9K2M7' });
+  });
+
+  it('backfills a distinct member code for an existing guild without one', async () => {
+    const config = createTestConfig();
+    const beforeMigration = await buildApp(config, { logger: false });
+    const owner = await createGuild(
+      beforeMigration,
+      '기존 코드 없는 길드',
+      'legacyowner',
+      '기존길드장',
+    );
+    beforeMigration.db
+      .prepare("DELETE FROM invites WHERE guild_id = ? AND role = 'MEMBER'")
+      .run(owner.guildId);
+    await beforeMigration.close();
+
+    const afterMigration = await buildApp(config, { logger: false });
+    openApps.push(afterMigration);
+    const invite = afterMigration.db
+      .prepare("SELECT code, role FROM invites WHERE guild_id = ? AND role = 'MEMBER'")
+      .get(owner.guildId) as { code: string; role: string };
+    expect(invite).toEqual({
+      code: expect.stringMatching(/^[A-Z0-9]{6}$/),
+      role: 'MEMBER',
+    });
+  });
+
   it('creates and lists role-based custom codes, then immediately revokes the previous code', async () => {
     const app = await createApp();
     const owner = await createGuild(app, '가입 코드 길드', 'inviteowner', '코드길드장');
@@ -266,10 +320,54 @@ describe('guild invite routes', () => {
     expect(auditCount.count).toBe(3);
   });
 
-  it('generates a random code, enforces global uniqueness, and isolates invite lists by guild', async () => {
+  it('creates distinct guild defaults, joins the intended guild, and enforces global uniqueness', async () => {
     const app = await createApp();
     const first = await createGuild(app, '첫 번째 코드 길드', 'firstowner', '첫길드장');
     const second = await createGuild(app, '두 번째 코드 길드', 'secondowner', '둘째길드장');
+
+    const firstDefaultResponse = await app.inject({
+      method: 'GET',
+      url: '/api/invites',
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    const secondDefaultResponse = await app.inject({
+      method: 'GET',
+      url: '/api/invites',
+      headers: { authorization: `Bearer ${second.token}` },
+    });
+    const firstDefault = (
+      firstDefaultResponse.json() as { invites: Array<{ inviteCode: string; role: string }> }
+    ).invites[0];
+    const secondDefault = (
+      secondDefaultResponse.json() as { invites: Array<{ inviteCode: string; role: string }> }
+    ).invites[0];
+    expect(firstDefault.inviteCode).toMatch(/^[A-Z0-9]{6}$/);
+    expect(secondDefault.inviteCode).toMatch(/^[A-Z0-9]{6}$/);
+    expect(firstDefault.inviteCode).not.toBe(secondDefault.inviteCode);
+
+    const firstJoin = await app.inject({
+      method: 'POST',
+      url: '/api/users/register',
+      payload: {
+        mode: 'JOIN_GUILD',
+        code: firstDefault.inviteCode,
+        ...profileFor('firstmember', '첫길드원'),
+      },
+    });
+    expect(firstJoin.statusCode).toBe(201);
+    expect(firstJoin.json()).toMatchObject({ guildId: first.guildId, role: 'MEMBER' });
+
+    const secondJoin = await app.inject({
+      method: 'POST',
+      url: '/api/users/register',
+      payload: {
+        mode: 'JOIN_GUILD',
+        code: secondDefault.inviteCode,
+        ...profileFor('secondmember', '둘째길드원'),
+      },
+    });
+    expect(secondJoin.statusCode).toBe(201);
+    expect(secondJoin.json()).toMatchObject({ guildId: second.guildId, role: 'MEMBER' });
 
     const generated = await app.inject({
       method: 'POST',
@@ -281,7 +379,7 @@ describe('guild invite routes', () => {
     const generatedInvite = generated.json() as {
       data: { inviteCode: string; role: string };
     };
-    expect(generatedInvite.data.inviteCode).toMatch(/^MEMBER-[A-F0-9]{8}$/);
+    expect(generatedInvite.data.inviteCode).toMatch(/^[A-Z0-9]{6}$/);
 
     const duplicate = await app.inject({
       method: 'POST',
@@ -300,7 +398,7 @@ describe('guild invite routes', () => {
       url: '/api/invites',
       headers: { authorization: `Bearer ${second.token}` },
     });
-    expect(secondList.json()).toEqual({ invites: [] });
+    expect(secondList.json()).toEqual({ invites: [secondDefault] });
   });
 
   it('uses the latest database role immediately after master transfer', async () => {

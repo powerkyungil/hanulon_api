@@ -73,7 +73,12 @@ export const participantParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 export const participationToggleBodySchema = Type.Object(
-  { type: nameSchema, region: nameSchema, spawnTime: spawnTimeSchema },
+  {
+    type: nameSchema,
+    region: nameSchema,
+    spawnTime: spawnTimeSchema,
+    characterKey: Type.Optional(Type.String({ pattern: '^(MAIN|ALTERNATE):[1-9]\\d*$' })),
+  },
   { additionalProperties: false },
 );
 export const legacyParticipationTargetsBodySchema = Type.Object(

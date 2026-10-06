@@ -11,6 +11,8 @@ import { registerRequestContext } from './plugins/request-context.plugin';
 import { registerAuthRoutes } from './modules/auth/auth.route';
 import { registerCollectionRoutes } from './modules/collections/collections.route';
 import { registerContentGroupRoutes } from './modules/content-groups/content-groups.route';
+import { registerDeputyAccountRoutes } from './modules/deputy-accounts/deputy-accounts.route';
+import { registerDistributionRoutes } from './modules/distributions/distributions.route';
 import { registerGuildRoutes } from './modules/guild/guild.route';
 import { registerHealthRoutes } from './modules/health/health.route';
 import { registerMemberRoutes } from './modules/members/members.route';
@@ -80,6 +82,8 @@ export const buildApp = async (
   await registerBossVoteRoutes(app, config.bossHistoryRetentionDays);
   await registerCollectionRoutes(app);
   await registerContentGroupRoutes(app);
+  await registerDeputyAccountRoutes(app);
+  await registerDistributionRoutes(app);
   await registerGuildRoutes(app);
   await registerMemberRoutes(app);
   await registerNoticeRoutes(app);

@@ -57,6 +57,7 @@ export interface RegistrationResult {
   userId: number;
   guildId: number;
   role: UserRole;
+  inviteCode?: string;
 }
 
 export interface AuthSession {

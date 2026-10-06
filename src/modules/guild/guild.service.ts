@@ -1,6 +1,5 @@
-import { randomBytes } from 'node:crypto';
-
 import { AppError } from '../../shared/errors/app-error';
+import { createRandomInviteCode } from '../../shared/invites/invite-code';
 import { GuildRepository } from './guild.repository';
 import type {
   GuildActor,
@@ -82,7 +81,7 @@ export class GuildService {
       return current;
     }
 
-    const inviteCode = normalizedCustomCode || this.generateAvailableCode(role);
+    const inviteCode = normalizedCustomCode || this.generateAvailableCode();
     if (normalizedCustomCode && this.repository.inviteCodeExists(inviteCode)) {
       throw new AppError('INVITE_CODE_EXISTS', '이미 사용 중인 가입 코드입니다.', 409);
     }
@@ -97,9 +96,9 @@ export class GuildService {
     }
   }
 
-  private generateAvailableCode(role: InviteRole): string {
+  private generateAvailableCode(): string {
     for (let attempt = 0; attempt < RANDOM_CODE_ATTEMPTS; attempt += 1) {
-      const code = `${role}-${randomBytes(4).toString('hex').toUpperCase()}`;
+      const code = createRandomInviteCode();
       if (!this.repository.inviteCodeExists(code)) return code;
     }
     throw new AppError(

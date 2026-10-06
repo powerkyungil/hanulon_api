@@ -37,20 +37,6 @@ export class SchedulesService {
       throw new AppError('SCHEDULE_DUPLICATED', '같은 보스 일정이 중복되어 있습니다.', 409);
     }
     const resolved = inputs.map((input) => this.resolveInput(guildId, input));
-    for (const input of resolved) {
-      const current = this.repository.findByDefinition(guildId, input.bossDefinitionId);
-      if (
-        current &&
-        current.spawnTime !== input.spawnTime &&
-        this.repository.hasRecordedVote(guildId, input)
-      ) {
-        throw new AppError(
-          'SCHEDULE_VOTE_CONFLICT',
-          '변경할 시각에 기존 투표 기록이 있습니다. 다른 출현 시각을 입력해 주세요.',
-          409,
-        );
-      }
-    }
     this.repository.saveMany(actor, resolved);
   }
 
@@ -113,7 +99,11 @@ export class SchedulesService {
       .map((definition) => definition.boss);
   }
 
-  public replaceTargetDefinitionIds(userId: number, guildId: number, bossDefinitionIds: number[]): void {
+  public replaceTargetDefinitionIds(
+    userId: number,
+    guildId: number,
+    bossDefinitionIds: number[],
+  ): void {
     const actor = this.requireManager(userId, guildId);
     const normalized = [...new Set(bossDefinitionIds)].sort((a, b) => a - b);
     if (normalized.length !== bossDefinitionIds.length) {
@@ -149,7 +139,9 @@ export class SchedulesService {
     this.replaceTargetDefinitionIds(
       userId,
       guildId,
-      definitions.filter((definition) => normalized.includes(definition.boss)).map((definition) => definition.id),
+      definitions
+        .filter((definition) => normalized.includes(definition.boss))
+        .map((definition) => definition.id),
     );
   }
 
@@ -170,14 +162,13 @@ export class SchedulesService {
     endMs: number,
   ): VoteOccurrence[] {
     this.requireActiveActor(userId, guildId);
-    const targetDefinitionIds = this.repository.findTargetDefinitionIds(guildId);
-    if (targetDefinitionIds.length === 0) return [];
-    const targetSet = new Set(targetDefinitionIds);
+    const targetKeys = this.repository.findTargetKeys(guildId);
+    const targetSet = new Set(targetKeys.map((target) => this.bossKey(target)));
     const current = this.repository
       .findAll(guildId)
       .filter(
         (schedule) =>
-          targetSet.has(schedule.bossDefinitionId) &&
+          targetSet.has(this.bossKey(schedule)) &&
           schedule.spawnTime >= startMs &&
           schedule.spawnTime <= endMs,
       )
@@ -192,12 +183,14 @@ export class SchedulesService {
       }));
     const currentKeys = new Set(current.map((occurrence) => this.voteKey(occurrence)));
     const history = this.repository
-      .findHistory(guildId, startMs, endMs, targetDefinitionIds)
+      .findHistory(guildId, startMs, endMs)
       .filter((occurrence) => !currentKeys.has(this.voteKey(occurrence)));
     const fixed = this.buildFixedOccurrences(
       this.bossesService
         .getDefinitions(userId, guildId)
-        .filter((definition) => definition.type === '고정' && targetSet.has(definition.id)),
+        .filter(
+          (definition) => definition.type === '고정' && targetSet.has(this.bossKey(definition)),
+        ),
       startMs,
       endMs,
     );
@@ -212,6 +205,7 @@ export class SchedulesService {
     userId: number,
     guildId: number,
     input: ParticipationToggleInput,
+    actorContext?: { deputyId?: number; actorNickname?: string },
   ): boolean {
     const actor = this.requireActiveActor(userId, guildId);
     this.validateInput(input);
@@ -228,7 +222,13 @@ export class SchedulesService {
     if (this.repository.isVoteClosed(guildId, voteKey)) {
       throw new AppError('PARTICIPATION_CLOSED', '참여가 마감된 일정입니다.', 409);
     }
-    return this.repository.toggleParticipation(actor, voteKey, input.boss, input.spawnTime);
+    return this.repository.toggleParticipation(
+      { ...actor, ...actorContext },
+      voteKey,
+      input.boss,
+      input.spawnTime,
+      input.characterKey ?? `MAIN:${userId}`,
+    );
   }
 
   private resolveInput(guildId: number, input: ScheduleInput): ResolvedScheduleInput {
@@ -243,7 +243,11 @@ export class SchedulesService {
     const definition = this.bossesService.getDefinition(guildId, input);
     if (!definition) throw new AppError('BOSS_NOT_FOUND', '등록된 보스를 찾을 수 없습니다.', 404);
     if (input.bossDefinitionId !== undefined && input.bossDefinitionId !== definition.id) {
-      throw new AppError('BOSS_DEFINITION_MISMATCH', '보스 정의 ID가 일정 정보와 일치하지 않습니다.', 422);
+      throw new AppError(
+        'BOSS_DEFINITION_MISMATCH',
+        '보스 정의 ID가 일정 정보와 일치하지 않습니다.',
+        422,
+      );
     }
     return { ...input, bossDefinitionId: definition.id };
   }
@@ -333,6 +337,10 @@ export class SchedulesService {
     spawnTime: number;
   }): string {
     return `${occurrence.type}|${occurrence.region}|${occurrence.boss}|${occurrence.spawnTime}`;
+  }
+
+  private bossKey(definition: { type: string; region: string; boss: string }): string {
+    return `${definition.type}|${definition.region}|${definition.boss}`;
   }
 
   private validateInput(input: ScheduleInput): void {

@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 
 import { withTransaction } from '../../infrastructure/db/transaction';
+import { insertDefaultMemberInvite } from '../../infrastructure/db/default-member-invites';
 import type { AuthUser, CharacterProfileInput, RegistrationResult, UserRole } from './auth.types';
 
 interface UserRow {
@@ -60,6 +61,21 @@ export class AuthRepository {
     return row ? this.mapUser(row) : null;
   }
 
+  public usernameExists(username: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          `
+            SELECT 1 AS found FROM users WHERE username = ? COLLATE NOCASE
+            UNION ALL
+            SELECT 1 AS found FROM deputy_accounts WHERE username = ? COLLATE NOCASE
+            LIMIT 1
+          `,
+        )
+        .get(username, username),
+    );
+  }
+
   private mapUser(row: UserRow): AuthUser {
     return {
       id: row.id,
@@ -111,6 +127,8 @@ export class AuthRepository {
         )
         .run(guildId, guildName);
 
+      const inviteCode = insertDefaultMemberInvite(this.db, guildId);
+
       const userId = this.insertUser({
         ...user,
         guildId,
@@ -118,7 +136,7 @@ export class AuthRepository {
       });
       this.insertCharacter(userId, user.profile);
 
-      return { userId, guildId, role: 'MASTER' };
+      return { userId, guildId, role: 'MASTER', inviteCode };
     });
   }
 

@@ -505,6 +505,8 @@ export class MembersRepository {
         'boss_audit_logs',
         'schedule_audit_logs',
         'boss_vote_audit_logs',
+        'deputy_account_audit_logs',
+        'distribution_audit_logs',
       ];
       for (const table of detachedGuildTables) {
         this.db.prepare(`DELETE FROM ${table} WHERE guild_id = ?`).run(identity.guildId);
@@ -614,6 +616,10 @@ export class MembersRepository {
         [identity.guildId, identity.id, identity.id],
       ],
       [
+        'DELETE FROM distribution_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
+        [identity.guildId, identity.id],
+      ],
+      [
         'DELETE FROM boss_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
         [identity.guildId, identity.id],
       ],
@@ -637,6 +643,10 @@ export class MembersRepository {
         `,
         [identity.guildId, identity.id, identity.id],
       ],
+      [
+        'DELETE FROM deputy_account_audit_logs WHERE guild_id = ? AND actor_user_id = ?',
+        [identity.guildId, identity.id],
+      ],
     ];
 
     for (const [sql, params] of directAuditDeletes) {
@@ -654,6 +664,8 @@ export class MembersRepository {
       'boss_audit_logs',
       'schedule_audit_logs',
       'boss_vote_audit_logs',
+      'deputy_account_audit_logs',
+      'distribution_audit_logs',
     ];
     for (const table of auditTables) {
       this.db
@@ -676,6 +688,23 @@ export class MembersRepository {
   }
 
   private anonymizeSharedResourceAttribution(identity: AccountDeletionIdentity): void {
+    this.db
+      .prepare(
+        `UPDATE boss_participants
+         SET actor_id = NULL, actor_nickname_snapshot = '탈퇴한 회원'
+         WHERE guild_id = ? AND actor_type = 'USER' AND actor_id = ? AND user_id <> ?`,
+      )
+      .run(identity.guildId, identity.id, identity.id);
+
+    this.db
+      .prepare(
+        `UPDATE distribution_periods
+         SET created_by = CASE WHEN created_by = ? THEN 0 ELSE created_by END,
+             confirmed_by = CASE WHEN confirmed_by = ? THEN 0 ELSE confirmed_by END
+         WHERE guild_id = ? AND (created_by = ? OR confirmed_by = ?)`,
+      )
+      .run(identity.id, identity.id, identity.guildId, identity.id, identity.id);
+
     const attributionUpdates = [
       'UPDATE notice_rules SET created_by = 0 WHERE guild_id = ? AND created_by = ?',
       'UPDATE price_guides SET created_by = 0 WHERE guild_id = ? AND created_by = ?',

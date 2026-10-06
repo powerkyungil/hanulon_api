@@ -1,8 +1,8 @@
 import { Type } from '@sinclair/typebox';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 
 import { API_PREFIX } from '../../config/constants';
-import { AppError } from '../../shared/errors/app-error';
+import { requestIdentity, resolveCharacterKey } from '../../shared/request-identity';
 import { success } from '../../shared/http/response';
 import { BossesRepository } from '../bosses/bosses.repository';
 import { BossesService } from '../bosses/bosses.service';
@@ -20,7 +20,9 @@ import {
   v1CreatedResponseSchema,
   v1ToggleResponseSchema,
   v1VoteListResponseSchema,
+  noContentResponseSchema,
   voteParamsSchema,
+  voteListQuerySchema,
   voteCloseBodySchema,
   voteMemberRatesQuerySchema,
   voteParticipantParamsSchema,
@@ -32,6 +34,7 @@ import {
   type VoteMemberRatesQuery,
   type VoteParticipantParams,
   type VoteParams,
+  type VoteListQuery,
   type VoteStatsQuery,
   type VoteToggleBody,
 } from './boss-votes.schema';
@@ -40,19 +43,7 @@ import { BossVotesService } from './boss-votes.service';
 type ResponseStyle = 'v1' | 'legacy';
 const routeConfig = (responseStyle: ResponseStyle) => ({ responseStyle });
 
-const identityFromRequest = (request: FastifyRequest): { userId: number; guildId: number } => {
-  const userId = Number(request.user.sub);
-  const guildId = request.user.guildId;
-  if (
-    !Number.isSafeInteger(userId) ||
-    userId < 1 ||
-    !Number.isSafeInteger(guildId) ||
-    guildId < 1
-  ) {
-    throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
-  }
-  return { userId, guildId };
-};
+const identityFromRequest = requestIdentity;
 
 export const registerBossVoteRoutes = async (
   app: FastifyInstance,
@@ -77,6 +68,7 @@ export const registerBossVoteRoutes = async (
         preHandler: app.authenticate,
         schema: {
           tags: ['boss-votes'],
+          querystring: voteListQuerySchema,
           response: {
             200: style === 'v1' ? v1VoteListResponseSchema : legacyVoteListResponseSchema,
           },
@@ -84,7 +76,12 @@ export const registerBossVoteRoutes = async (
       },
       async (request, reply) => {
         const identity = identityFromRequest(request);
-        const votes = service.getVotes(identity.userId, identity.guildId);
+        const query = request.query as VoteListQuery;
+        const votes = service.getVotes(
+          identity.userId,
+          identity.guildId,
+          resolveCharacterKey(identity, query.characterKey),
+        );
         return reply.send(style === 'v1' ? success(votes) : votes.filter((vote) => !vote.isClosed));
       },
     );
@@ -136,6 +133,10 @@ export const registerBossVoteRoutes = async (
           params.voteKey,
           body.boss,
           body.spawnTime,
+          resolveCharacterKey(identity, body.characterKey),
+          identity.accountType === 'DEPUTY'
+            ? { deputyId: identity.accountId, actorNickname: identity.accountNickname }
+            : undefined,
         );
         return reply.send(style === 'v1' ? success({ joined }) : { joined });
       },
@@ -157,6 +158,25 @@ export const registerBossVoteRoutes = async (
       toggle: '/api/vote-participants/:voteKey',
     },
     'legacy',
+  );
+
+  app.delete(
+    `${API_PREFIX}/boss-votes/:voteKey`,
+    {
+      config: routeConfig('v1'),
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['boss-votes'],
+        params: voteParamsSchema,
+        response: { 204: noContentResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = identityFromRequest(request);
+      const params = request.params as VoteParams;
+      service.deleteVote(identity.userId, identity.guildId, params.voteKey);
+      return reply.code(204).send();
+    },
   );
 
   app.delete(

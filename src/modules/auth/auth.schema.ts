@@ -65,6 +65,7 @@ export const registrationResponseSchema = Type.Object({
   userId: Type.Integer({ minimum: 1 }),
   guildId: Type.Integer({ minimum: 1 }),
   role: userRoleSchema,
+  inviteCode: Type.Optional(Type.String({ minLength: 6, maxLength: 6, pattern: '^[A-Z0-9]{6}$' })),
 });
 
 export const v1RegistrationResponseSchema = Type.Object({

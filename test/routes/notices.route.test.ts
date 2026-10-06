@@ -57,7 +57,13 @@ const joinGuild = async (
 ) => {
   const code = `${role}-${username}`.toUpperCase();
   app.db
-    .prepare('INSERT INTO invites (guild_id, code, role) VALUES (?, ?, ?)')
+    .prepare(
+      `
+        INSERT INTO invites (guild_id, code, role)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id, role) DO UPDATE SET code = excluded.code
+      `,
+    )
     .run(guildId, code, role);
   const response = await app.inject({
     method: 'POST',

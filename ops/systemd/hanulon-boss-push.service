@@ -1,0 +1,12 @@
+[Unit]
+Description=Hanulon boss schedule FCM dispatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/var/www/html/hanulon_api
+Environment=NODE_ENV=production
+ExecStart=/opt/node22/bin/node /var/www/html/hanulon_api/dist/jobs/dispatch-boss-pushes.js
+Nice=10

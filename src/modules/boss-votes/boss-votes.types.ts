@@ -1,4 +1,5 @@
 import type { UserRole } from '../auth/auth.types';
+import type { CharacterType } from '../../shared/character-identity';
 
 export interface VoteActor {
   id: number;
@@ -6,6 +7,8 @@ export interface VoteActor {
   role: UserRole;
   nickname: string;
   isActive: boolean;
+  deputyId?: number;
+  actorNickname?: string;
 }
 
 export interface ManualVoteInput {
@@ -23,6 +26,13 @@ export interface ManualVote extends ManualVoteInput {
 export interface VoteParticipant {
   userId: number;
   nickname: string;
+  characterType?: CharacterType;
+  characterKey?: string;
+  votedBy?: {
+    accountType: 'USER' | 'DEPUTY';
+    accountId: number | null;
+    nickname: string;
+  };
 }
 
 export interface VoteParticipantDetail extends VoteParticipant {

@@ -25,6 +25,7 @@ interface RequestRow {
   id: number;
   guild_id: number;
   requester_id: number;
+  requester_character_type: 'MAIN' | 'ALTERNATE';
   requested_time: string;
   memo: string;
   status: SupportRequestStatus;
@@ -41,6 +42,7 @@ interface RequestSummaryRow {
   id: number;
   guild_id: number;
   requester_id: number;
+  requester_character_type: 'MAIN' | 'ALTERNATE';
   status: SupportRequestStatus;
   selected_application_id: number | null;
 }
@@ -49,6 +51,7 @@ interface ApplicationRow {
   id: number;
   request_id: number;
   applicant_id: number;
+  applicant_character_type: 'MAIN' | 'ALTERNATE';
   memo: string;
   status: SupportApplicationStatus;
   created_at_ms: number;
@@ -62,6 +65,7 @@ interface ApplicationSummaryRow {
   id: number;
   request_id: number;
   applicant_id: number;
+  applicant_character_type: 'MAIN' | 'ALTERNATE';
   status: SupportApplicationStatus;
 }
 
@@ -69,6 +73,7 @@ const mapRequestSummary = (row: RequestSummaryRow): SupportRequestSummary => ({
   id: row.id,
   guildId: row.guild_id,
   requesterId: row.requester_id,
+  requesterCharacterType: row.requester_character_type,
   status: row.status,
   selectedApplicationId: row.selected_application_id,
 });
@@ -77,6 +82,7 @@ const mapApplicationSummary = (row: ApplicationSummaryRow): SupportApplicationSu
   id: row.id,
   requestId: row.request_id,
   applicantId: row.applicant_id,
+  applicantCharacterType: row.applicant_character_type,
   status: row.status,
 });
 
@@ -112,19 +118,24 @@ export class SupportRepository {
             sr.id,
             sr.guild_id,
             sr.requester_id,
+            sr.requester_character_type,
             sr.requested_time,
             sr.memo,
             sr.status,
             sr.selected_application_id,
             CAST(strftime('%s', sr.created_at) AS INTEGER) * 1000 AS created_at_ms,
             CAST(strftime('%s', sr.updated_at) AS INTEGER) * 1000 AS updated_at_ms,
-            u.nickname,
+            CASE WHEN sr.requester_character_type = 'ALTERNATE'
+              THEN COALESCE(ac.character_name, u.nickname) ELSE u.nickname END AS nickname,
             c.occupation,
-            c.main_class,
+            CASE WHEN sr.requester_character_type = 'ALTERNATE'
+              THEN ac.main_class ELSE c.main_class END AS main_class,
             c.combat_power
           FROM support_requests AS sr
           JOIN users AS u ON u.id = sr.requester_id
           LEFT JOIN characters AS c ON c.user_id = u.id
+          LEFT JOIN alternate_characters AS ac
+            ON ac.user_id = u.id AND sr.requester_character_type = 'ALTERNATE'
           WHERE sr.guild_id = ?
           ORDER BY
             CASE sr.status WHEN 'OPEN' THEN 0 WHEN 'MATCHED' THEN 1 ELSE 2 END,
@@ -141,17 +152,22 @@ export class SupportRepository {
             sa.id,
             sa.request_id,
             sa.applicant_id,
+            sa.applicant_character_type,
             sa.memo,
             sa.status,
             CAST(strftime('%s', sa.created_at) AS INTEGER) * 1000 AS created_at_ms,
-            u.nickname,
+            CASE WHEN sa.applicant_character_type = 'ALTERNATE'
+              THEN COALESCE(ac.character_name, u.nickname) ELSE u.nickname END AS nickname,
             c.occupation,
-            c.main_class,
+            CASE WHEN sa.applicant_character_type = 'ALTERNATE'
+              THEN ac.main_class ELSE c.main_class END AS main_class,
             c.combat_power
           FROM support_applications AS sa
           JOIN support_requests AS sr ON sr.id = sa.request_id
           JOIN users AS u ON u.id = sa.applicant_id
           LEFT JOIN characters AS c ON c.user_id = u.id
+          LEFT JOIN alternate_characters AS ac
+            ON ac.user_id = u.id AND sa.applicant_character_type = 'ALTERNATE'
           WHERE sr.guild_id = ?
           ORDER BY
             CASE sa.status WHEN 'SELECTED' THEN 0 ELSE 1 END,
@@ -168,6 +184,7 @@ export class SupportRepository {
         id: row.id,
         requestId: row.request_id,
         applicantId: row.applicant_id,
+        applicantCharacterType: row.applicant_character_type,
         memo: row.memo,
         status: row.status,
         createdAt: row.created_at_ms,
@@ -185,6 +202,7 @@ export class SupportRepository {
       id: row.id,
       guildId: row.guild_id,
       requesterId: row.requester_id,
+      requesterCharacterType: row.requester_character_type,
       requestedTime: row.requested_time,
       memo: row.memo,
       status: row.status,
@@ -203,7 +221,7 @@ export class SupportRepository {
     const row = this.db
       .prepare(
         `
-          SELECT id, guild_id, requester_id, status, selected_application_id
+          SELECT id, guild_id, requester_id, requester_character_type, status, selected_application_id
           FROM support_requests
           WHERE guild_id = ? AND id = ?
           LIMIT 1
@@ -221,7 +239,7 @@ export class SupportRepository {
     const row = this.db
       .prepare(
         `
-          SELECT sa.id, sa.request_id, sa.applicant_id, sa.status
+          SELECT sa.id, sa.request_id, sa.applicant_id, sa.applicant_character_type, sa.status
           FROM support_applications AS sa
           JOIN support_requests AS sr ON sr.id = sa.request_id
           WHERE sr.guild_id = ? AND sa.request_id = ? AND sa.id = ?
@@ -237,11 +255,20 @@ export class SupportRepository {
       const result = this.db
         .prepare(
           `
-            INSERT INTO support_requests (guild_id, requester_id, requested_time, memo)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO support_requests (
+              guild_id, requester_id, requester_character_type, requested_time, memo, actor_deputy_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
           `,
         )
-        .run(actor.guildId, actor.id, input.requestedTime, input.memo);
+        .run(
+          actor.guildId,
+          actor.id,
+          input.characterType ?? actor.characterType ?? 'MAIN',
+          input.requestedTime,
+          input.memo,
+          actor.deputyId ?? null,
+        );
       const requestId = Number(result.lastInsertRowid);
       this.insertAudit(actor, requestId, 'REQUEST_CREATED', {});
       return requestId;
@@ -299,11 +326,19 @@ export class SupportRepository {
       const result = this.db
         .prepare(
           `
-            INSERT INTO support_applications (request_id, applicant_id, memo)
-            VALUES (?, ?, ?)
+            INSERT INTO support_applications (
+              request_id, applicant_id, applicant_character_type, memo, actor_deputy_id
+            )
+            VALUES (?, ?, ?, ?, ?)
           `,
         )
-        .run(requestId, actor.id, memo);
+        .run(
+          requestId,
+          actor.id,
+          actor.characterType ?? 'MAIN',
+          memo,
+          actor.deputyId ?? null,
+        );
       const applicationId = Number(result.lastInsertRowid);
       this.insertAudit(actor, requestId, 'APPLICATION_CREATED', { applicationId });
       return applicationId;
@@ -389,13 +424,21 @@ export class SupportRepository {
           INSERT INTO support_audit_logs (
             guild_id,
             actor_user_id,
+            actor_deputy_id,
             request_id,
             action,
             metadata_json
           )
-          VALUES (?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?)
         `,
       )
-      .run(actor.guildId, actor.id, requestId, action, JSON.stringify(metadata));
+      .run(
+        actor.guildId,
+        actor.id,
+        actor.deputyId ?? null,
+        requestId,
+        action,
+        JSON.stringify(metadata),
+      );
   }
 }

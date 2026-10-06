@@ -187,7 +187,7 @@ describe('boss vote routes', () => {
     expect((v1.json() as { data: unknown[] }).data).toHaveLength(3);
   });
 
-  it('moves a corrected vote with participants, supports retries and undo, and hides it on deletion', async () => {
+  it('keeps each corrected schedule occurrence and its vote records visible across deletion', async () => {
     const app = await createApp();
     const owner = await createGuild(app, '시간 수정 길드', 'timeowner');
     const member = await joinGuild(app, owner.guildId, 'MEMBER', 'timemember');
@@ -201,7 +201,7 @@ describe('boss vote routes', () => {
           url: '/api/vote-bosses',
           headers: auth(member.token),
         })
-      ).json() as Array<{ id: number; voteKey: string }>;
+      ).json() as Array<{ id: number | null; voteKey: string }>;
     await saveTarget(app, owner.token);
     await saveSchedule(app, owner.token, spawnTime);
     expect(
@@ -214,37 +214,63 @@ describe('boss vote routes', () => {
         })
       ).json(),
     ).toEqual({ joined: true });
-    for (const time of [changedTime, changedTime, spawnTime, changedTime]) {
-      expect((await saveSchedule(app, member.token, time)).statusCode).toBe(200);
-      expect(await list()).toEqual([
-        expect.objectContaining({
-          voteKey: key(time),
-          spawnTime: time,
-          joined: true,
-          participantCount: 1,
-          isHistory: false,
-          participants: [{ userId: member.userId, nickname: 'timemember' }],
-        }),
-      ]);
-    }
-    const stale = await app.inject({
-      method: 'POST',
-      url: `/api/vote-participants/${encodeURIComponent(key(spawnTime))}`,
-      headers: auth(member.token),
-      payload: { boss: bossKey.boss, spawnTime },
+    const initialSchedules = await app.inject({
+      method: 'GET',
+      url: '/api/v1/schedules',
+      headers: auth(owner.token),
     });
-    expect(stale.statusCode).toBe(404);
-    // A failure after participant movement must restore the entire occurrence.
+    const initialScheduleId = (initialSchedules.json() as { data: Array<{ id: number }> }).data[0]
+      ?.id;
+    expect(
+      (
+        await app.inject({
+          method: 'DELETE',
+          url: `/api/v1/schedules/${initialScheduleId}`,
+          headers: auth(member.token),
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(await list()).toEqual([
+      expect.objectContaining({
+        voteKey: key(spawnTime),
+        participantCount: 1,
+        isHistory: true,
+        participants: [{ userId: member.userId, nickname: 'timemember' }],
+      }),
+    ]);
+    expect((await saveSchedule(app, member.token, changedTime)).statusCode).toBe(200);
+    expect(await list()).toEqual([
+      expect.objectContaining({
+        voteKey: key(spawnTime),
+        spawnTime,
+        joined: true,
+        participantCount: 1,
+        isHistory: true,
+        participants: [{ userId: member.userId, nickname: 'timemember' }],
+      }),
+      expect.objectContaining({
+        voteKey: key(changedTime),
+        spawnTime: changedTime,
+        joined: false,
+        participantCount: 0,
+        isHistory: false,
+      }),
+    ]);
+    expect((await saveSchedule(app, member.token, changedTime)).statusCode).toBe(200);
+    expect((await saveSchedule(app, member.token, spawnTime)).statusCode).toBe(200);
+    expect(await list()).toEqual([
+      expect.objectContaining({ voteKey: key(spawnTime), joined: true, isHistory: false }),
+      expect.objectContaining({ voteKey: key(changedTime), participantCount: 0, isHistory: true }),
+    ]);
+    expect((await saveSchedule(app, member.token, changedTime)).statusCode).toBe(200);
+    // A failed schedule replacement must leave all existing vote records untouched.
     app.db.exec(`CREATE TEMP TRIGGER reject_corrected_schedule BEFORE INSERT ON boss_schedules
       BEGIN SELECT RAISE(ABORT, 'test schedule insert failure'); END;`);
     expect((await saveSchedule(app, member.token, changedTime + 1)).statusCode).toBe(500);
     app.db.exec('DROP TRIGGER reject_corrected_schedule');
     expect(await list()).toEqual([
-      expect.objectContaining({
-        voteKey: key(changedTime),
-        participantCount: 1,
-        joined: true,
-      }),
+      expect.objectContaining({ voteKey: key(spawnTime), participantCount: 1, joined: true }),
+      expect.objectContaining({ voteKey: key(changedTime), participantCount: 0, joined: false }),
     ]);
     const month = new Date(spawnTime + 9 * 3_600_000).toISOString().slice(0, 7);
     const stats = async () =>
@@ -255,19 +281,27 @@ describe('boss vote routes', () => {
           headers: auth(owner.token),
         })
       ).json();
-    expect(await stats()).toMatchObject({ totalBosses: 1, totalParticipants: 1 });
-    const [vote] = await list();
+    expect(await stats()).toMatchObject({ totalBosses: 2, totalParticipants: 1 });
+    const schedule = await app.inject({
+      method: 'GET',
+      url: '/api/v1/schedules',
+      headers: auth(owner.token),
+    });
+    const scheduleId = (schedule.json() as { data: Array<{ id: number }> }).data[0]?.id;
     expect(
       (
         await app.inject({
           method: 'DELETE',
-          url: `/api/v1/schedules/${vote?.id}`,
+          url: `/api/v1/schedules/${scheduleId}`,
           headers: auth(member.token),
         })
       ).statusCode,
     ).toBe(204);
-    expect(await list()).toEqual([]);
-    expect(await stats()).toMatchObject({ totalBosses: 0, totalParticipants: 0 });
+    expect(await list()).toEqual([
+      expect.objectContaining({ voteKey: key(spawnTime), participantCount: 1, isHistory: true }),
+      expect.objectContaining({ voteKey: key(changedTime), participantCount: 0, isHistory: true }),
+    ]);
+    expect(await stats()).toMatchObject({ totalBosses: 2, totalParticipants: 1 });
     expect(
       app.db
         .prepare('SELECT COUNT(*) AS count FROM boss_participants WHERE guild_id = ?')
@@ -280,9 +314,10 @@ describe('boss vote routes', () => {
     ).toEqual({ count: 2 });
   });
 
-  it('keeps cut/mung votes and closed state, rejects collisions, and resets only current votes', async () => {
+  it('keeps cut/mung votes and closed state through replacement and full reset', async () => {
     const app = await createApp();
     const owner = await createGuild(app, '이력 유지 길드', 'historyowner');
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'historymember');
     const other = await createGuild(app, '다른 이력 길드', 'historyother');
     const spawnTime = seoulDayStart() + 3_600_000;
     for (const guild of [owner, other]) {
@@ -290,6 +325,16 @@ describe('boss vote routes', () => {
       await saveSchedule(app, guild.token, spawnTime);
     }
     const key = (time: number) => `${bossKey.type}|${bossKey.region}|${bossKey.boss}|${time}`;
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: `/api/v1/boss-votes/${encodeURIComponent(key(spawnTime))}/participation`,
+          headers: auth(member.token),
+          payload: { boss: bossKey.boss, spawnTime },
+        })
+      ).json(),
+    ).toEqual({ data: { joined: true } });
     app.db
       .prepare(
         `INSERT INTO participation_states (guild_id, vote_key, spawn_time, state, updated_by)
@@ -309,7 +354,18 @@ describe('boss vote routes', () => {
         ).json() as { data: Array<{ voteKey: string; isHistory: boolean }> }
       ).data;
     expect(await list()).toEqual([
-      expect.objectContaining({ voteKey: key(corrected), isClosed: true }),
+      expect.objectContaining({
+        voteKey: key(spawnTime),
+        isHistory: true,
+        isClosed: true,
+        participantCount: 1,
+      }),
+      expect.objectContaining({
+        voteKey: key(corrected),
+        isHistory: false,
+        isClosed: false,
+        participantCount: 0,
+      }),
     ]);
     expect(
       (
@@ -322,7 +378,13 @@ describe('boss vote routes', () => {
       ).statusCode,
     ).toBe(200);
     expect(await list()).toEqual([
-      expect.objectContaining({ voteKey: key(corrected), isHistory: true, isClosed: true }),
+      expect.objectContaining({
+        voteKey: key(spawnTime),
+        isHistory: true,
+        isClosed: true,
+        participantCount: 1,
+      }),
+      expect.objectContaining({ voteKey: key(corrected), isHistory: true, isClosed: false }),
       expect.objectContaining({
         voteKey: key(corrected + 12 * 3_600_000),
         isHistory: false,
@@ -330,9 +392,8 @@ describe('boss vote routes', () => {
       }),
     ]);
     const conflict = await saveSchedule(app, owner.token, corrected);
-    expect(conflict.statusCode).toBe(409);
-    expect(conflict.json()).toMatchObject({ code: 'SCHEDULE_VOTE_CONFLICT' });
-    expect(await list()).toHaveLength(2);
+    expect(conflict.statusCode).toBe(200);
+    expect(await list()).toHaveLength(3);
     const cut = await app.inject({
       method: 'POST',
       url: '/api/schedules/cut',
@@ -340,23 +401,181 @@ describe('boss vote routes', () => {
       payload: bossKey,
     });
     expect(cut.statusCode).toBe(200);
-    expect(await list()).toHaveLength(3);
+    expect(await list()).toHaveLength(4);
+    const cutSpawnTime = (cut.json() as { success: true; nextSpawn: number }).nextSpawn;
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: `/api/v1/boss-votes/${encodeURIComponent(key(cutSpawnTime))}/participation`,
+          headers: auth(member.token),
+          payload: { boss: bossKey.boss, spawnTime: cutSpawnTime },
+        })
+      ).json(),
+    ).toEqual({ data: { joined: true } });
     expect(
       (
         await app.inject({
           method: 'DELETE',
-          url: '/api/schedules-all',
+          url: '/api/v1/schedules',
           headers: auth(owner.token),
         })
       ).statusCode,
-    ).toBe(200);
+    ).toBe(204);
     expect(await list()).toEqual([
+      expect.objectContaining({ voteKey: key(spawnTime), isHistory: true }),
       expect.objectContaining({ voteKey: key(corrected), isHistory: true }),
       expect.objectContaining({ voteKey: key(corrected + 12 * 3_600_000), isHistory: true }),
+      expect.objectContaining({ isHistory: true }),
     ]);
+    expect(await list()).toContainEqual(
+      expect.objectContaining({ voteKey: key(spawnTime), participantCount: 1 }),
+    );
+    const month = new Date(spawnTime + 9 * 3_600_000).toISOString().slice(0, 7);
+    const stats = await app.inject({
+      method: 'GET',
+      url: `/api/v1/vote-stats?month=${month}`,
+      headers: auth(owner.token),
+    });
+    expect(stats.json()).toMatchObject({
+      data: expect.objectContaining({ totalBosses: 3, totalParticipants: 1 }),
+    });
     expect(await list(other.token)).toEqual([
       expect.objectContaining({ voteKey: key(spawnTime), isHistory: false }),
     ]);
+  });
+
+  it('keeps targeted votes visible after boss definitions are reset', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, '보스 초기화 보존 길드', 'bossresetowner');
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'bossresetmember');
+    const spawnTime = seoulDayStart() + 10 * 3_600_000;
+    const voteKey = `${bossKey.type}|${bossKey.region}|${bossKey.boss}|${spawnTime}`;
+
+    await saveTarget(app, owner.token);
+    await saveSchedule(app, owner.token, spawnTime);
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: `/api/v1/boss-votes/${encodeURIComponent(voteKey)}/participation`,
+          headers: auth(member.token),
+          payload: { boss: bossKey.boss, spawnTime },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/bosses/reset',
+          headers: auth(owner.token),
+        })
+      ).statusCode,
+    ).toBe(204);
+
+    const votes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/boss-votes',
+      headers: auth(owner.token),
+    });
+    expect((votes.json() as { data: Array<Record<string, unknown>> }).data).toContainEqual(
+      expect.objectContaining({ voteKey, isHistory: true, participantCount: 1 }),
+    );
+    const month = new Date(spawnTime + 9 * 3_600_000).toISOString().slice(0, 7);
+    const stats = await app.inject({
+      method: 'GET',
+      url: `/api/v1/vote-stats?month=${month}`,
+      headers: auth(owner.token),
+    });
+    expect(stats.json()).toMatchObject({
+      data: expect.objectContaining({ totalBosses: 1, totalParticipants: 1 }),
+    });
+  });
+
+  it('deletes only the exact scheduled vote and participants for managers', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, '투표 직접 삭제 길드', 'votedeleteowner');
+    const member = await joinGuild(app, owner.guildId, 'MEMBER', 'votedeletemember');
+    const firstSpawn = seoulDayStart() + 10 * 3_600_000;
+    const secondSpawn = firstSpawn + 2 * 3_600_000;
+    const key = (time: number) => `${bossKey.type}|${bossKey.region}|${bossKey.boss}|${time}`;
+
+    await saveTarget(app, owner.token);
+    await saveSchedule(app, owner.token, firstSpawn);
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: `/api/v1/boss-votes/${encodeURIComponent(key(firstSpawn))}/participation`,
+          headers: auth(member.token),
+          payload: { boss: bossKey.boss, spawnTime: firstSpawn },
+        })
+      ).statusCode,
+    ).toBe(200);
+    await saveSchedule(app, owner.token, secondSpawn);
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: `/api/v1/boss-votes/${encodeURIComponent(key(secondSpawn))}/participation`,
+          headers: auth(member.token),
+          payload: { boss: bossKey.boss, spawnTime: secondSpawn },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const denied = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/boss-votes/${encodeURIComponent(key(firstSpawn))}`,
+      headers: auth(member.token),
+    });
+    expect(denied.statusCode).toBe(403);
+
+    app.db.prepare("UPDATE users SET role = 'ADMIN' WHERE id = ?").run(member.userId);
+
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/boss-votes/${encodeURIComponent(key(firstSpawn))}`,
+      headers: auth(member.token),
+    });
+    expect(deleted.statusCode).toBe(204);
+    const remaining = await app.inject({
+      method: 'GET',
+      url: '/api/v1/boss-votes',
+      headers: auth(owner.token),
+    });
+    expect((remaining.json() as { data: Array<Record<string, unknown>> }).data).toEqual([
+      expect.objectContaining({
+        voteKey: key(secondSpawn),
+        participantCount: 1,
+        participants: [{ userId: member.userId, nickname: 'votedeletemember' }],
+      }),
+    ]);
+    expect(
+      app.db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM boss_participants WHERE guild_id = ? AND vote_key = ?',
+        )
+        .get(owner.guildId, key(firstSpawn)),
+    ).toEqual({ count: 0 });
+    expect(
+      app.db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM boss_participants WHERE guild_id = ? AND vote_key = ?',
+        )
+        .get(owner.guildId, key(secondSpawn)),
+    ).toEqual({ count: 1 });
+    const month = new Date(secondSpawn + 9 * 3_600_000).toISOString().slice(0, 7);
+    const stats = await app.inject({
+      method: 'GET',
+      url: `/api/v1/vote-stats?month=${month}`,
+      headers: auth(member.token),
+    });
+    expect(stats.json()).toMatchObject({
+      data: expect.objectContaining({ totalBosses: 1, totalParticipants: 1 }),
+    });
   });
 
   it('allows only database staff to create today or tomorrow manual votes and rejects duplicates', async () => {
