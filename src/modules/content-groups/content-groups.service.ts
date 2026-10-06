@@ -1,6 +1,10 @@
 import { AppError } from '../../shared/errors/app-error';
 import { ContentGroupsRepository } from './content-groups.repository';
-import type { ContentGroup, ContentGroupActor } from './content-groups.types';
+import type {
+  ContentGroup,
+  ContentGroupActor,
+  ContentGroupRosterMember,
+} from './content-groups.types';
 
 const isUniqueConstraintError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('UNIQUE constraint failed');
@@ -11,6 +15,11 @@ export class ContentGroupsService {
   public getGroups(userId: number, guildId: number): ContentGroup[] {
     this.requireActiveActor(userId, guildId);
     return this.repository.findGroups(guildId);
+  }
+
+  public getRosterMembers(userId: number, guildId: number): ContentGroupRosterMember[] {
+    this.requireActiveActor(userId, guildId);
+    return this.repository.findRosterMembers(guildId);
   }
 
   public createGroup(userId: number, guildId: number, name: string): ContentGroup {

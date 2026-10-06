@@ -6,6 +6,14 @@ const groupSchema = Type.Object({
   memberIds: Type.Array(Type.Integer({ minimum: 1 })),
 });
 
+const rosterMemberSchema = Type.Object({
+  id: Type.Integer({ minimum: 1 }),
+  nickname: Type.String(),
+  occupation: Type.String(),
+  mainClass: Type.String(),
+  combatPower: Type.Integer({ minimum: 0 }),
+});
+
 export const groupNameBodySchema = Type.Object(
   { name: Type.String({ minLength: 1, maxLength: 30 }) },
   { additionalProperties: false },
@@ -28,6 +36,9 @@ export const legacyGroupListResponseSchema = Type.Array(groupSchema);
 export const legacyGroupResponseSchema = groupSchema;
 export const v1GroupListResponseSchema = Type.Object({ data: Type.Array(groupSchema) });
 export const v1GroupResponseSchema = Type.Object({ data: groupSchema });
+export const v1GroupRosterResponseSchema = Type.Object({
+  data: Type.Array(rosterMemberSchema),
+});
 export const noContentResponseSchema = Type.Null();
 
 export type GroupNameBody = Static<typeof groupNameBodySchema>;

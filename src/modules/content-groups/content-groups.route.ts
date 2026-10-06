@@ -12,6 +12,7 @@ import {
   legacyGroupResponseSchema,
   noContentResponseSchema,
   v1GroupListResponseSchema,
+  v1GroupRosterResponseSchema,
   v1GroupResponseSchema,
   type GroupMembersBody,
   type GroupNameBody,
@@ -45,6 +46,22 @@ const identityFromRequest = (request: FastifyRequest): { userId: number; guildId
 
 export const registerContentGroupRoutes = async (app: FastifyInstance): Promise<void> => {
   const service = new ContentGroupsService(new ContentGroupsRepository(app.db));
+
+  app.get(
+    `${API_PREFIX}/content-groups/roster`,
+    {
+      config: routeConfig('v1'),
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['content-groups'],
+        response: { 200: v1GroupRosterResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = identityFromRequest(request);
+      return reply.send(success(service.getRosterMembers(identity.userId, identity.guildId)));
+    },
+  );
 
   const registerRoutes = (baseUrl: string, responseStyle: ResponseStyle): void => {
     app.get(

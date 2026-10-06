@@ -6,6 +6,7 @@ import type {
   ContentGroup,
   ContentGroupActor,
   ContentGroupAuditAction,
+  ContentGroupRosterMember,
 } from './content-groups.types';
 
 interface ActorRow {
@@ -20,6 +21,14 @@ interface GroupRow {
   guild_id: number;
   name: string;
   user_id: number | null;
+}
+
+interface RosterMemberRow {
+  id: number;
+  nickname: string;
+  occupation: string | null;
+  main_class: string | null;
+  combat_power: number | null;
 }
 
 export class ContentGroupsRepository {
@@ -70,6 +79,36 @@ export class ContentGroupsRepository {
       groups.set(row.id, group);
     });
     return [...groups.values()];
+  }
+
+  public findRosterMembers(guildId: number): ContentGroupRosterMember[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT
+            u.id,
+            u.nickname,
+            c.occupation,
+            c.main_class,
+            c.combat_power
+          FROM users AS u
+          LEFT JOIN characters AS c ON c.user_id = u.id
+          WHERE u.guild_id = ? AND u.is_active = 1
+          ORDER BY
+            COALESCE(c.combat_power, 0) DESC,
+            u.nickname COLLATE NOCASE ASC,
+            u.id ASC
+        `,
+      )
+      .all(guildId) as RosterMemberRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      nickname: row.nickname,
+      occupation: row.occupation ?? '',
+      mainClass: row.main_class ?? '',
+      combatPower: row.combat_power ?? 0,
+    }));
   }
 
   public findGroup(guildId: number, groupId: number): ContentGroup | null {

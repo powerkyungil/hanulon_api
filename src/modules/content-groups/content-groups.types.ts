@@ -14,5 +14,13 @@ export interface ContentGroup {
   memberIds: number[];
 }
 
+export interface ContentGroupRosterMember {
+  id: number;
+  nickname: string;
+  occupation: string;
+  mainClass: string;
+  combatPower: number;
+}
+
 export type ContentGroupAuditAction =
   'GROUP_CREATED' | 'GROUP_RENAMED' | 'GROUP_DELETED' | 'MEMBERS_REPLACED';

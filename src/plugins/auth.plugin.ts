@@ -41,6 +41,7 @@ const isDeputyRouteAllowed = (method: string, rawUrl: string): boolean => {
   }
 
   if (path === '/api/v1/schedules' || path === '/api/schedules') return method === 'GET';
+  if (path === '/api/v1/bosses') return method === 'GET';
   if (
     path === '/api/v1/participants' ||
     path === '/api/participants' ||
@@ -66,6 +67,7 @@ const isDeputyRouteAllowed = (method: string, rawUrl: string): boolean => {
   ) {
     return ['POST', 'DELETE', 'PUT'].includes(method);
   }
+  if (path === '/api/v1/content-groups/roster') return method === 'GET';
   if (path === '/api/v1/content-groups' || path === '/api/groups') return method === 'GET';
   return false;
 };
@@ -112,11 +114,7 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
           `,
         )
         .get(principalId) as DeputyAccountAuthRow | undefined;
-      if (
-        !account ||
-        account.is_active !== 1 ||
-        payload.tokenVersion !== account.token_version
-      ) {
+      if (!account || account.is_active !== 1 || payload.tokenVersion !== account.token_version) {
         throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
       }
 
@@ -140,8 +138,7 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
                   `,
                 )
                 .get(ownerUserId, account.guild_id) as
-                | { id: number; character_name: string }
-                | undefined)
+                { id: number; character_name: string } | undefined)
             : (app.db
                 .prepare(
                   `
@@ -153,8 +150,7 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
                   `,
                 )
                 .get(ownerUserId, account.guild_id) as
-                | { id: number; character_name: string }
-                | undefined);
+                { id: number; character_name: string } | undefined);
         if (character) {
           activeCharacterOwnerUserId = character.id;
           activeCharacterType = characterMatch[1] as 'MAIN' | 'ALTERNATE';
@@ -163,7 +159,11 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
       }
 
       if (!isDeputyRouteAllowed(request.method, request.url)) {
-        throw new AppError('DEPUTY_FEATURE_FORBIDDEN', '부주 계정으로 사용할 수 없는 기능입니다.', 403);
+        throw new AppError(
+          'DEPUTY_FEATURE_FORBIDDEN',
+          '부주 계정으로 사용할 수 없는 기능입니다.',
+          403,
+        );
       }
       if (
         !activeCharacterOwnerUserId &&
