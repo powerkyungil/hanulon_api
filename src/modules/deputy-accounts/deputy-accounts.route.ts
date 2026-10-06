@@ -13,7 +13,9 @@ import {
   deputyCreatedResponseSchema,
   deputyLoginBodySchema,
   deputyLoginResponseSchema,
+  deputyNicknameBodySchema,
   deputyPasswordBodySchema,
+  deputyProfileResponseSchema,
   deputySelectCharacterBodySchema,
   deputyCharacterResponseSchema,
   noContentResponseSchema,
@@ -21,6 +23,7 @@ import {
   type DeputyActiveBody,
   type DeputyCreateBody,
   type DeputyLoginBody,
+  type DeputyNicknameBody,
   type DeputyPasswordBody,
   type DeputySelectCharacterBody,
 } from './deputy-accounts.schema';
@@ -40,7 +43,12 @@ const accountIdentity = (request: FastifyRequest): { userId: number; guildId: nu
   }
   const userId = Number(request.user.sub);
   const guildId = request.user.guildId;
-  if (!Number.isSafeInteger(userId) || userId < 1 || !Number.isSafeInteger(guildId) || guildId < 1) {
+  if (
+    !Number.isSafeInteger(userId) ||
+    userId < 1 ||
+    !Number.isSafeInteger(guildId) ||
+    guildId < 1
+  ) {
     throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
   }
   return { userId, guildId };
@@ -164,6 +172,40 @@ export const registerDeputyAccountRoutes = async (app: FastifyInstance): Promise
       const body = request.body as DeputyActiveBody;
       service.setActive(identity.userId, identity.guildId, params.id, body.isActive);
       return reply.code(204).send();
+    },
+  );
+
+  app.get(
+    `${API_PREFIX}/deputy/me`,
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['deputy-accounts'],
+        response: { 200: deputyProfileResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = deputyIdentity(request);
+      return reply.send(success(service.getProfile(identity.deputyId, identity.guildId)));
+    },
+  );
+
+  app.put(
+    `${API_PREFIX}/deputy/me`,
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ['deputy-accounts'],
+        body: deputyNicknameBodySchema,
+        response: { 200: deputyProfileResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const identity = deputyIdentity(request);
+      const body = request.body as DeputyNicknameBody;
+      return reply.send(
+        success(service.updateNickname(identity.deputyId, identity.guildId, body.nickname)),
+      );
     },
   );
 

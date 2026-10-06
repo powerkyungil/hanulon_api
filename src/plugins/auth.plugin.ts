@@ -36,6 +36,7 @@ interface DeputyAccountAuthRow {
 
 const isDeputyRouteAllowed = (method: string, rawUrl: string): boolean => {
   const path = rawUrl.split('?')[0];
+  if (path === '/api/v1/deputy/me') return method === 'GET' || method === 'PUT';
   if (path === '/api/v1/deputy/characters' || path === '/api/v1/deputy/active-character') {
     return method === 'GET' || (path.endsWith('/active-character') && method === 'PUT');
   }
@@ -168,7 +169,8 @@ export const registerAuth = async (app: FastifyInstance, config: AppConfig): Pro
       if (
         !activeCharacterOwnerUserId &&
         request.url.split('?')[0] !== '/api/v1/deputy/characters' &&
-        request.url.split('?')[0] !== '/api/v1/deputy/active-character'
+        request.url.split('?')[0] !== '/api/v1/deputy/active-character' &&
+        request.url.split('?')[0] !== '/api/v1/deputy/me'
       ) {
         throw new AppError(
           'DEPUTY_CHARACTER_REQUIRED',

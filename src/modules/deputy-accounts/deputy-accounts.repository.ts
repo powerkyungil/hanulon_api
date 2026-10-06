@@ -41,8 +41,7 @@ export class DeputyAccountsRepository {
         'SELECT id, guild_id, role, is_active FROM users WHERE id = ? AND guild_id = ? LIMIT 1',
       )
       .get(userId, guildId) as
-      | { id: number; guild_id: number; role: UserRole; is_active: number }
-      | undefined;
+      { id: number; guild_id: number; role: UserRole; is_active: number } | undefined;
     return row
       ? { id: row.id, guildId: row.guild_id, role: row.role, isActive: row.is_active === 1 }
       : null;
@@ -175,12 +174,7 @@ export class DeputyAccountsRepository {
     });
   }
 
-  public setActive(
-    guildId: number,
-    actorUserId: number,
-    id: number,
-    isActive: boolean,
-  ): boolean {
+  public setActive(guildId: number, actorUserId: number, id: number, isActive: boolean): boolean {
     return withTransaction(this.db, () => {
       const changed =
         this.db
@@ -257,11 +251,7 @@ export class DeputyAccountsRepository {
     }));
   }
 
-  public selectCharacter(
-    deputyId: number,
-    guildId: number,
-    characterKey: string,
-  ): void {
+  public selectCharacter(deputyId: number, guildId: number, characterKey: string): void {
     withTransaction(this.db, () => {
       this.db
         .prepare(
@@ -272,12 +262,34 @@ export class DeputyAccountsRepository {
           `,
         )
         .run(characterKey, deputyId, guildId);
+      this.insertAudit(guildId, null, deputyId, 'CHARACTER_SELECTED', { characterKey }, deputyId);
+    });
+  }
+
+  public updateNickname(guildId: number, deputyId: number, nickname: string): void {
+    withTransaction(this.db, () => {
+      const account = this.findAccount(guildId, deputyId);
+      if (!account) return;
+      if (account.nickname === nickname) return;
+
+      this.db
+        .prepare(
+          `
+            UPDATE deputy_accounts
+            SET nickname = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND guild_id = ? AND is_active = 1
+          `,
+        )
+        .run(nickname, deputyId, guildId);
       this.insertAudit(
         guildId,
         null,
         deputyId,
-        'CHARACTER_SELECTED',
-        { characterKey },
+        'NICKNAME_UPDATED',
+        {
+          previousNickname: account.nickname,
+          nickname,
+        },
         deputyId,
       );
     });
@@ -292,7 +304,8 @@ export class DeputyAccountsRepository {
       | 'PASSWORD_RESET'
       | 'ACCOUNT_ACTIVATED'
       | 'ACCOUNT_DEACTIVATED'
-      | 'CHARACTER_SELECTED',
+      | 'CHARACTER_SELECTED'
+      | 'NICKNAME_UPDATED',
     metadata: Record<string, unknown>,
     actorDeputyId: number | null = null,
   ): void {

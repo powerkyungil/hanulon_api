@@ -57,10 +57,22 @@ export const deputySelectCharacterBodySchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const deputyNicknameBodySchema = Type.Object(
+  { nickname: Type.String({ minLength: 1, maxLength: 40 }) },
+  { additionalProperties: false },
+);
+
 export const deputyAccountListResponseSchema = Type.Object({ data: Type.Array(accountSchema) });
 export const deputyCharactersResponseSchema = Type.Object({ data: Type.Array(characterSchema) });
 export const deputyCharacterResponseSchema = Type.Object({
   data: Type.Union([characterSchema, Type.Null()]),
+});
+export const deputyProfileResponseSchema = Type.Object({
+  data: Type.Object({
+    deputyId: Type.Integer({ minimum: 1 }),
+    username: Type.String(),
+    nickname: Type.String(),
+  }),
 });
 export const deputyLoginResponseSchema = Type.Object({
   data: Type.Object({
@@ -84,3 +96,4 @@ export type DeputyActiveBody = Static<typeof deputyActiveBodySchema>;
 export type DeputyAccountParams = Static<typeof deputyAccountParamsSchema>;
 export type DeputyLoginBody = Static<typeof deputyLoginBodySchema>;
 export type DeputySelectCharacterBody = Static<typeof deputySelectCharacterBodySchema>;
+export type DeputyNicknameBody = Static<typeof deputyNicknameBodySchema>;

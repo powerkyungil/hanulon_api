@@ -17,11 +17,7 @@ export class DeputyAccountsService {
 
   public async login(username: string, password: string): Promise<DeputyAccountCredentials> {
     const account = this.repository.findCredentialsByUsername(username.trim());
-    if (
-      !account ||
-      !account.isActive ||
-      !(await bcrypt.compare(password, account.passwordHash))
-    ) {
+    if (!account || !account.isActive || !(await bcrypt.compare(password, account.passwordHash))) {
       throw new AppError('INVALID_CREDENTIALS', '아이디 또는 비밀번호가 올바르지 않습니다.', 401);
     }
     return account;
@@ -84,6 +80,39 @@ export class DeputyAccountsService {
     return this.repository.findCharacters(guildId);
   }
 
+  public getProfile(
+    deputyId: number,
+    guildId: number,
+  ): {
+    deputyId: number;
+    username: string;
+    nickname: string;
+  } {
+    const account = this.requireAccount(guildId, deputyId);
+    return { deputyId: account.id, username: account.username, nickname: account.nickname };
+  }
+
+  public updateNickname(
+    deputyId: number,
+    guildId: number,
+    nickname: string,
+  ): {
+    deputyId: number;
+    username: string;
+    nickname: string;
+  } {
+    const account = this.requireAccount(guildId, deputyId);
+    if (!account.isActive) {
+      throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
+    }
+    const normalizedNickname = nickname.trim();
+    if (!normalizedNickname || normalizedNickname.length > 40) {
+      throw new AppError('DEPUTY_NICKNAME_INVALID', '닉네임은 1~40자로 입력해 주세요.', 422);
+    }
+    this.repository.updateNickname(guildId, deputyId, normalizedNickname);
+    return { deputyId: account.id, username: account.username, nickname: normalizedNickname };
+  }
+
   public getActiveCharacter(deputyId: number, guildId: number): DeputyCharacter | null {
     const account = this.requireAccount(guildId, deputyId);
     if (!account.isActive || !account.activeCharacterKey) return null;
@@ -110,7 +139,11 @@ export class DeputyAccountsService {
       .findCharacters(guildId)
       .find((candidate) => candidate.characterKey === characterKey);
     if (!character) {
-      throw new AppError('DEPUTY_CHARACTER_NOT_FOUND', '같은 길드의 캐릭터를 찾을 수 없습니다.', 404);
+      throw new AppError(
+        'DEPUTY_CHARACTER_NOT_FOUND',
+        '같은 길드의 캐릭터를 찾을 수 없습니다.',
+        404,
+      );
     }
     this.repository.selectCharacter(deputyId, guildId, characterKey);
     return character;

@@ -114,6 +114,112 @@ afterEach(async () => {
 });
 
 describe('deputy feature permissions', () => {
+  it('allows a deputy to read and change only their own nickname before selecting a character', async () => {
+    const app = await createApp();
+    const owner = await createGuild(app, 'deputy-nickname-owner', '길드장', 175000);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/deputy-accounts',
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: {
+        username: 'nickname-deputy',
+        password: 'deputy-password',
+        nickname: '기존 부주명',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const otherCreated = await app.inject({
+      method: 'POST',
+      url: '/api/v1/deputy-accounts',
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: {
+        username: 'another-deputy',
+        password: 'deputy-password',
+        nickname: '다른 부주명',
+      },
+    });
+    expect(otherCreated.statusCode).toBe(201);
+    const otherDeputyId = (otherCreated.json() as { data: { id: number } }).data.id;
+
+    const loginResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/deputy-auth/login',
+      payload: { username: 'nickname-deputy', password: 'deputy-password' },
+    });
+    const deputyId = (loginResponse.json() as { data: { deputyId: number } }).data.deputyId;
+    const token = (loginResponse.json() as { data: { token: string } }).data.token;
+    const headers = { authorization: `Bearer ${token}` };
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/deputy/me',
+      headers,
+      payload: { nickname: '  새 부주명  ' },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({
+      data: { deputyId, username: 'nickname-deputy', nickname: '새 부주명' },
+    });
+
+    const profile = await app.inject({ method: 'GET', url: '/api/v1/deputy/me', headers });
+    expect(profile.statusCode).toBe(200);
+    expect(profile.json()).toMatchObject({ data: { nickname: '새 부주명' } });
+
+    const attemptedAccountOverride = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/deputy/me',
+      headers,
+      payload: { nickname: '새 부주명', deputyId: otherDeputyId },
+    });
+    expect(attemptedAccountOverride.statusCode).toBe(200);
+    expect(attemptedAccountOverride.json()).toMatchObject({
+      data: { deputyId, nickname: '새 부주명' },
+    });
+    const otherAccount = app.db
+      .prepare('SELECT nickname FROM deputy_accounts WHERE id = ? AND guild_id = ?')
+      .get(otherDeputyId, owner.guildId) as { nickname: string };
+    expect(otherAccount.nickname).toBe('다른 부주명');
+
+    const unsupportedMethod = await app.inject({
+      method: 'POST',
+      url: '/api/v1/deputy/me',
+      headers,
+      payload: { nickname: '허용되지 않은 변경' },
+    });
+    expect(unsupportedMethod.statusCode).toBe(404);
+
+    const audit = app.db
+      .prepare(
+        `SELECT actor_deputy_id, deputy_account_id, action, metadata_json
+         FROM deputy_account_audit_logs WHERE deputy_account_id = ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(deputyId) as {
+      actor_deputy_id: number;
+      deputy_account_id: number;
+      action: string;
+      metadata_json: string;
+    };
+    expect(audit).toMatchObject({
+      actor_deputy_id: deputyId,
+      deputy_account_id: deputyId,
+      action: 'NICKNAME_UPDATED',
+    });
+    expect(JSON.parse(audit.metadata_json)).toEqual({
+      previousNickname: '기존 부주명',
+      nickname: '새 부주명',
+    });
+
+    const characterRequired = await app.inject({
+      method: 'GET',
+      url: '/api/v1/schedules',
+      headers,
+    });
+    expect(characterRequired.statusCode).toBe(409);
+    expect(characterRequired.json()).toMatchObject({
+      error: { code: 'DEPUTY_CHARACTER_REQUIRED' },
+    });
+  }, 15_000);
+
   it('allows the complete schedule and read-only content overview without exposing full member profiles', async () => {
     const app = await createApp();
     const owner = await createGuild(app, 'deputy-owner', '길드장', 175000);

@@ -285,6 +285,7 @@ modules/schedules/
 /api/v1/deputy-accounts
 /api/v1/deputy-accounts/:id/password
 /api/v1/deputy-accounts/:id/active
+/api/v1/deputy/me
 /api/v1/deputy/characters
 /api/v1/deputy/active-character
 /api/v1/guild/settings
@@ -428,6 +429,7 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 
 - 부주 계정은 길드 단위로 생성하며 로그인 아이디는 일반 사용자 계정과 전역에서 중복될 수 없다. 부주 계정은 특정 캐릭터에 종속되지 않는다.
 - `POST /api/v1/deputy-auth/login`은 부주 전용 access token을 발급한다. `GET /api/v1/deputy/characters`에서 같은 길드의 활성 본캐·부캐를 확인하고 `PUT /api/v1/deputy/active-character`로 현재 행동 캐릭터를 선택한다.
+- `GET /api/v1/deputy/me`는 본인 부주 계정 프로필을 조회하며, `PUT /api/v1/deputy/me`의 `{ "nickname": "새 닉네임" }`으로 본인 닉네임만 변경한다. 캐릭터 선택 전에도 사용할 수 있고, 응답은 갱신된 프로필을 반환한다.
 - 운영진 API는 `GET/POST /api/v1/deputy-accounts`, `PUT /api/v1/deputy-accounts/:id/password`, `PUT /api/v1/deputy-accounts/:id/active`다. 계정 비활성화와 비밀번호 변경은 기존 세션을 무효화한다.
 - 부주 접근 범위는 일정 조회·참여(보스 정의 `GET /api/v1/bosses` 포함), 보스 투표 조회·참여, 손지원 요청·신청·매칭, 콘텐츠 그룹 조회로 한정한다. 일정·투표 설정/삭제/마감/통계 관리, 운영 메뉴, 콘텐츠 그룹 편성 변경은 금지한다.
 - 부주의 일정·투표 참여는 선택된 캐릭터의 소유 회원과 캐릭터 종류를 기록하며 행위자는 부주 계정으로 남긴다. 기능 사용 전 유효한 캐릭터 선택이 필요하다.
@@ -439,7 +441,7 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 부주 계정 데이터는 다음을 기준으로 한다.
 
 - `deputy_accounts`는 길드, 로그인 아이디, bcrypt 비밀번호 해시, 활성 상태, 선택 캐릭터 키, token version을 저장한다. 계정 비밀번호 원문은 저장하지 않는다.
-- `deputy_account_audit_logs`는 운영진의 계정 생성·비밀번호 변경·활성 상태 변경과 부주의 캐릭터 선택을 행위자 사용자 또는 부주 계정으로 기록한다.
+- `deputy_account_audit_logs`는 운영진의 계정 생성·비밀번호 변경·활성 상태 변경과 부주의 캐릭터 선택·닉네임 변경을 행위자 사용자 또는 부주 계정으로 기록한다.
 - `boss_participants`의 기본키는 `(guild_id, vote_key, user_id, character_type)`이며 기존 참여 데이터는 본캐·본인 행위자로 migration한다.
 - `boss_vote_audit_logs`, `schedule_audit_logs`, `support_audit_logs`, `support_requests`, `support_applications`는 필요한 행위자 부주 ID를 별도로 보존한다.
 
@@ -543,9 +545,9 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 - 모든 쓰기 API는 로그인 여부와 역할을 서버에서 확인한다.
 - 리소스 소유권 확인이 필요한 경우 역할 검사 후 소유자·길드 범위를 추가 확인한다.
 - `MASTER` 계정 삭제·역할 변경·비밀번호 초기화는 별도 policy function을 사용한다.
-- 부주는 `users`의 역할이 아니라 길드 전체에 속한 별도 계정이다. `MASTER`·`ADMIN`만 생성·비밀번호 재설정·활성화를 할 수 있고, 부주 계정 자체에는 보스 일정·투표·손지원 매칭·콘텐츠 그룹 조회 외 API 접근을 허용하지 않는다.
+- 부주는 `users`의 역할이 아니라 길드 전체에 속한 별도 계정이다. `MASTER`·`ADMIN`만 생성·비밀번호 재설정·활성화를 할 수 있고, 부주 계정 자체에는 보스 일정·투표·손지원 매칭·콘텐츠 그룹 조회 외 API 접근을 허용하지 않는다. 단, 활성 캐릭터 선택 없이 본인 프로필을 조회하고 닉네임을 변경하는 것은 허용한다.
 - 부주는 같은 길드의 활성 본캐 또는 부캐 하나를 선택해 행동한다. 특정 본캐와 부주 계정의 사전 위임 관계는 만들지 않으며, 부주 계정은 선택 캐릭터를 바꿀 수 있다. 선택 캐릭터 소유자의 권한은 부주에게 승계되지 않는다.
-- 부주 기능 제한은 UI가 아닌 auth plugin에서 HTTP method와 경로 allowlist로 최종 적용한다. 보스 정의는 `GET /api/v1/bosses`만 허용하고, 콘텐츠 그룹 화면은 `GET /api/v1/content-groups`와 최소 프로필 응답의 `GET /api/v1/content-groups/roster`만 허용한다. 전체 회원 프로필 `GET /api/v1/members`는 허용하지 않는다. 선택 캐릭터가 없거나 더 이상 유효하지 않으면 캐릭터 선택 외 기능 요청을 거절한다.
+- 부주 기능 제한은 UI가 아닌 auth plugin에서 HTTP method와 경로 allowlist로 최종 적용한다. 보스 정의는 `GET /api/v1/bosses`만 허용하고, 콘텐츠 그룹 화면은 `GET /api/v1/content-groups`와 최소 프로필 응답의 `GET /api/v1/content-groups/roster`만 허용한다. 전체 회원 프로필 `GET /api/v1/members`는 허용하지 않는다. 본인 프로필 조회·닉네임 변경은 활성 캐릭터 선택 없이 허용하며, 그 밖의 기능은 유효한 캐릭터 선택을 요구한다.
 - 비밀번호 재설정과 계정 활성 상태 변경은 `token_version`을 증가시켜 기존 부주 JWT를 무효화한다. 비활성화 시 선택 캐릭터도 해제한다.
 - 투표 참여 요청의 행위자 계정과 대상 캐릭터를 분리한다. 일반 길드원은 같은 길드의 모든 활성 본캐·부캐를 대상으로 투표할 수 있고, 부주는 현재 선택 캐릭터만 대상으로 할 수 있다. 참여 목록에는 대리 행위자의 계정 종류·ID·닉네임을 표시한다.
 - 일정 등록·컷·멍·투표 마감·투표 삭제·컬렉션 타인 수정은 명시적인 permission code를 문서화한다.
@@ -892,5 +894,6 @@ Flutter 이미지 선택
 | 2026-09-17 | 일정 occurrence와 투표 삭제 경계 분리 | 일정 삭제·초기화·정정이 투표 이력과 참여를 숨기거나 이동하지 않도록 하고, 운영진의 정확한 voteKey 직접 삭제만 참여 기록을 제거하도록 함 |
 | 2026-10-05 | 길드 공용 부주 계정과 캐릭터별 대리 참여 | 캐릭터 위임 등록 없이 길드원이 대리 투표할 수 있게 하고, 부주 계정은 선택 캐릭터만 제한 기능에서 사용하며 행위자를 별도 기록함 |
 | 2026-10-06 | 부주 화면 조회 경로 보완 | 일정 화면의 보스 정의 조회를 허용하고 콘텐츠 그룹용 최소 회원 명단 API를 분리해 전체 프로필 노출 없이 조회를 완성함 |
+| 2026-10-06 | 부주 본인 닉네임 변경 허용 | 본인 계정만 수정하도록 제한하고 변경 행위와 이전·새 닉네임을 감사 로그에 보존함 |
 
 새로운 기술 선택이나 기존 결정을 뒤집는 변경은 이 표에 날짜·대안·선택 이유를 추가한다.
