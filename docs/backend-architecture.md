@@ -185,6 +185,7 @@ modules/schedules/
 | -------------------- | ------------------------------------- | --------------------------------------------------------- |
 | `auth`               | 로그인, 가입, JWT, 초대 token         | users, invites                                            |
 | `deputy-accounts`    | 길드 공용 부주 계정, 대상 캐릭터 선택, 기능 제한 | deputy_accounts, deputy_account_audit_logs                |
+| `member-delegations` | 기존 MEMBER 간 부주 위임, 제한 세션 발급·해제  | member_delegations, member_delegation_audit_logs          |
 | `guild`              | 길드명, 운영 정책, 서버 시간          | guild_settings                                            |
 | `members`            | 길드원 목록, 역할, 프로필             | users, characters                                         |
 | `bosses`             | 보스 정의와 순서                      | custom_bosses                                             |
@@ -288,6 +289,9 @@ modules/schedules/
 /api/v1/deputy/me
 /api/v1/deputy/characters
 /api/v1/deputy/active-character
+/api/v1/member-delegations
+/api/v1/member-delegations/:deputyUserId
+/api/v1/member-delegations/session
 /api/v1/guild/settings
 /api/v1/guild/master
 /api/v1/members
@@ -438,12 +442,23 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 - 손지원 요청·신청은 캐릭터 종류와 행위자 부주 ID를 보존한다. 부주는 자신이 선택한 캐릭터의 요청·신청에 대해서만 소유자 작업을 할 수 있고, 운영진 권한은 승계하지 않는다.
 - 콘텐츠 그룹은 현재 일반 길드원과 같은 조회 전용 범위다. 편성 및 그룹 관리 mutation은 기존 `MASTER`·`ADMIN` 정책을 유지한다.
 
+기존 회원 간 부주 위임은 다음 정책을 사용한다.
+
+- `MEMBER`가 같은 길드의 다른 활성 `MEMBER`를 자신의 부주로 등록·해제할 수 있다. `MASTER`·`ADMIN` 계정과 자기 자신은 대상에서 제외한다.
+- `POST /api/v1/member-delegations`의 로그인 회원을 위임 주체로 보고 `{ "deputyUserId": 123 }`으로 부주를 등록한다. `DELETE /api/v1/member-delegations/:deputyUserId`는 등록한 회원만 호출할 수 있다.
+- 부주 회원은 `POST /api/v1/member-delegations/session`으로 위임 대상 회원과 대상 캐릭터를 지정해 별도 access token을 발급받는다. 대상 캐릭터를 생략하면 대상 회원의 본캐를 사용한다.
+- 위임 token은 `MEMBER_DEPUTY` principal로 식별하며, 요청 시점마다 위임 관계·두 회원의 활성 상태·현재 역할·대상 캐릭터를 DB에서 다시 확인한다. 위임이 해제되면 기존 token은 즉시 401이 된다.
+- `MEMBER_DEPUTY`의 기능 범위는 기존 `DEPUTY` allowlist와 동일하다. 대상 회원의 `MASTER`·`ADMIN` 권한은 승계하지 않는다.
+- 업무 데이터에는 대상 회원·캐릭터를 소유자로, 실제 로그인한 부주 회원을 행위자로 저장한다. 일정·투표·손지원 감사 로그와 손지원 요청·신청 row에 실제 행위자 ID를 남긴다.
+
 부주 계정 데이터는 다음을 기준으로 한다.
 
 - `deputy_accounts`는 길드, 로그인 아이디, bcrypt 비밀번호 해시, 활성 상태, 선택 캐릭터 키, token version을 저장한다. 계정 비밀번호 원문은 저장하지 않는다.
 - `deputy_account_audit_logs`는 운영진의 계정 생성·비밀번호 변경·활성 상태 변경과 부주의 캐릭터 선택·닉네임 변경을 행위자 사용자 또는 부주 계정으로 기록한다.
+- `member_delegations`는 길드·대상 회원·부주 회원·활성 상태·해제 시각을 저장하고, `member_delegation_audit_logs`는 등록·해제 행위를 기록한다. 재요청으로 기존 해제 관계를 다시 등록하면 같은 관계를 활성화하고 등록 감사 로그를 남긴다.
+- `support_requests.actor_user_id`와 `support_applications.actor_user_id`는 기존 회원 부주의 실제 행위자를 저장하며, 기존 길드 공용 부주 계정은 `actor_deputy_id`를 함께 사용한다.
 - `boss_participants`의 기본키는 `(guild_id, vote_key, user_id, character_type)`이며 기존 참여 데이터는 본캐·본인 행위자로 migration한다.
-- `boss_vote_audit_logs`, `schedule_audit_logs`, `support_audit_logs`, `support_requests`, `support_applications`는 필요한 행위자 부주 ID를 별도로 보존한다.
+- `boss_vote_audit_logs`, `schedule_audit_logs`, `support_audit_logs`, `support_requests`, `support_applications`는 필요한 실제 사용자 행위자 ID와 길드 공용 부주 ID를 별도로 보존한다.
 
 공지·가격표·보스 통제 API는 다음 정책을 사용한다.
 
@@ -530,7 +545,7 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 ### 8.1 인증 흐름
 
 1. `POST /api/v1/auth/login` 또는 `POST /api/v1/deputy-auth/login`이 각 계정 저장소에서 아이디·비밀번호를 검증한다.
-2. 서버가 사용자 또는 부주 principal을 식별하는 access token을 발급한다. 부주 토큰은 계정의 `token_version`을 포함한다.
+2. 서버가 사용자, 길드 공용 부주 또는 `MEMBER_DEPUTY` principal을 식별하는 access token을 발급한다. 길드 공용 부주 토큰은 계정의 `token_version`을 포함한다.
 3. Flutter는 token을 secure storage에 저장하고 `Authorization: Bearer`로 전송한다.
 4. Fastify auth plugin이 token과 현재 DB 계정 상태를 검증하고 `request.user`를 만든다. 부주 요청은 매번 선택한 캐릭터와 활성 상태를 다시 조회한다.
 5. route 또는 service가 `MASTER`, `ADMIN`, `MEMBER` 정책을 최종 검사하고, 부주 principal은 별도의 API allowlist로 허용 기능을 제한한다.
@@ -545,11 +560,13 @@ FCM 푸시 API와 보스 일정 알림은 다음 정책을 사용한다.
 - 모든 쓰기 API는 로그인 여부와 역할을 서버에서 확인한다.
 - 리소스 소유권 확인이 필요한 경우 역할 검사 후 소유자·길드 범위를 추가 확인한다.
 - `MASTER` 계정 삭제·역할 변경·비밀번호 초기화는 별도 policy function을 사용한다.
-- 부주는 `users`의 역할이 아니라 길드 전체에 속한 별도 계정이다. `MASTER`·`ADMIN`만 생성·비밀번호 재설정·활성화를 할 수 있고, 부주 계정 자체에는 보스 일정·투표·손지원 매칭·콘텐츠 그룹 조회 외 API 접근을 허용하지 않는다. 단, 활성 캐릭터 선택 없이 본인 프로필을 조회하고 닉네임을 변경하는 것은 허용한다.
+- 길드 공용 부주 계정은 `users`의 역할이 아니라 길드 전체에 속한 별도 계정이다. `MASTER`·`ADMIN`만 생성·비밀번호 재설정·활성화를 할 수 있고, 부주 계정 자체에는 보스 일정·투표·손지원 매칭·콘텐츠 그룹 조회 외 API 접근을 허용하지 않는다. 단, 활성 캐릭터 선택 없이 본인 프로필을 조회하고 닉네임을 변경하는 것은 허용한다.
 - 부주는 같은 길드의 활성 본캐 또는 부캐 하나를 선택해 행동한다. 특정 본캐와 부주 계정의 사전 위임 관계는 만들지 않으며, 부주 계정은 선택 캐릭터를 바꿀 수 있다. 선택 캐릭터 소유자의 권한은 부주에게 승계되지 않는다.
+- 기존 `MEMBER` 간 위임은 `member_delegations`에 저장하며, 위임 주체와 대상 회원 모두 활성 `MEMBER`여야 한다. 부주 회원은 위임 대상의 본캐 또는 부캐를 지정한 `MEMBER_DEPUTY` token으로만 행동하고, 일반 로그인 token의 권한이나 대상 회원의 역할을 변경하지 않는다.
 - 부주 기능 제한은 UI가 아닌 auth plugin에서 HTTP method와 경로 allowlist로 최종 적용한다. 보스 정의는 `GET /api/v1/bosses`만 허용하고, 콘텐츠 그룹 화면은 `GET /api/v1/content-groups`와 최소 프로필 응답의 `GET /api/v1/content-groups/roster`만 허용한다. 전체 회원 프로필 `GET /api/v1/members`는 허용하지 않는다. 본인 프로필 조회·닉네임 변경은 활성 캐릭터 선택 없이 허용하며, 그 밖의 기능은 유효한 캐릭터 선택을 요구한다.
 - 비밀번호 재설정과 계정 활성 상태 변경은 `token_version`을 증가시켜 기존 부주 JWT를 무효화한다. 비활성화 시 선택 캐릭터도 해제한다.
 - 투표 참여 요청의 행위자 계정과 대상 캐릭터를 분리한다. 일반 길드원은 같은 길드의 모든 활성 본캐·부캐를 대상으로 투표할 수 있고, 부주는 현재 선택 캐릭터만 대상으로 할 수 있다. 참여 목록에는 대리 행위자의 계정 종류·ID·닉네임을 표시한다.
+- `MEMBER_DEPUTY`의 투표·일정 참여는 대상 회원의 캐릭터를 `user_id`로 저장하고 실제 부주 회원을 `actor_user_id`로 감사한다. 길드 공용 부주는 기존처럼 `actor_deputy_id`를 사용한다.
 - 일정 등록·컷·멍·투표 마감·투표 삭제·컬렉션 타인 수정은 명시적인 permission code를 문서화한다.
 
 ### 8.3 비밀값과 입력 보호
@@ -895,5 +912,6 @@ Flutter 이미지 선택
 | 2026-10-05 | 길드 공용 부주 계정과 캐릭터별 대리 참여 | 캐릭터 위임 등록 없이 길드원이 대리 투표할 수 있게 하고, 부주 계정은 선택 캐릭터만 제한 기능에서 사용하며 행위자를 별도 기록함 |
 | 2026-10-06 | 부주 화면 조회 경로 보완 | 일정 화면의 보스 정의 조회를 허용하고 콘텐츠 그룹용 최소 회원 명단 API를 분리해 전체 프로필 노출 없이 조회를 완성함 |
 | 2026-10-06 | 부주 본인 닉네임 변경 허용 | 본인 계정만 수정하도록 제한하고 변경 행위와 이전·새 닉네임을 감사 로그에 보존함 |
+| 2026-10-07 | 기존 MEMBER 간 부주 위임 추가 | 별도 계정 없이 회원 간 위임 세션을 발급하되, 대상 회원 권한을 승계하지 않고 실제 행위자와 대상 캐릭터를 분리 기록함 |
 
 새로운 기술 선택이나 기존 결정을 뒤집는 변경은 이 표에 날짜·대안·선택 이유를 추가한다.

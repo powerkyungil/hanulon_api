@@ -256,9 +256,10 @@ export class SupportRepository {
         .prepare(
           `
             INSERT INTO support_requests (
-              guild_id, requester_id, requester_character_type, requested_time, memo, actor_deputy_id
+              guild_id, requester_id, requester_character_type, requested_time, memo,
+              actor_user_id, actor_deputy_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -267,6 +268,7 @@ export class SupportRepository {
           input.characterType ?? actor.characterType ?? 'MAIN',
           input.requestedTime,
           input.memo,
+          actor.actorUserId ?? actor.id,
           actor.deputyId ?? null,
         );
       const requestId = Number(result.lastInsertRowid);
@@ -327,9 +329,10 @@ export class SupportRepository {
         .prepare(
           `
             INSERT INTO support_applications (
-              request_id, applicant_id, applicant_character_type, memo, actor_deputy_id
+              request_id, applicant_id, applicant_character_type, memo,
+              actor_user_id, actor_deputy_id
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -337,6 +340,7 @@ export class SupportRepository {
           actor.id,
           actor.characterType ?? 'MAIN',
           memo,
+          actor.actorUserId ?? actor.id,
           actor.deputyId ?? null,
         );
       const applicationId = Number(result.lastInsertRowid);
@@ -434,7 +438,7 @@ export class SupportRepository {
       )
       .run(
         actor.guildId,
-        actor.id,
+        actor.actorUserId ?? actor.id,
         actor.deputyId ?? null,
         requestId,
         action,

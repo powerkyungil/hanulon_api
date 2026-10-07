@@ -205,7 +205,7 @@ export class SchedulesService {
     userId: number,
     guildId: number,
     input: ParticipationToggleInput,
-    actorContext?: { deputyId?: number; actorNickname?: string },
+    actorContext?: { deputyId?: number; actorUserId?: number; actorNickname?: string },
   ): boolean {
     const actor = this.requireActiveActor(userId, guildId);
     this.validateInput(input);

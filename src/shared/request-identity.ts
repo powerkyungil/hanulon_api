@@ -6,7 +6,7 @@ import { makeCharacterKey, parseCharacterKey, type CharacterType } from './chara
 export interface RequestIdentity {
   userId: number;
   guildId: number;
-  accountType: 'USER' | 'DEPUTY';
+  accountType: 'USER' | 'DEPUTY' | 'MEMBER_DEPUTY';
   accountId: number;
   accountNickname: string;
   activeCharacterKey: string | null;
@@ -20,7 +20,7 @@ export const requestIdentity = (request: FastifyRequest): RequestIdentity => {
   if (!Number.isSafeInteger(guildId) || guildId < 1) {
     throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
   }
-  if (request.user.principalType === 'DEPUTY') {
+  if (request.user.principalType === 'DEPUTY' || request.user.principalType === 'MEMBER_DEPUTY') {
     const accountId = request.user.principalId;
     const userId = request.user.activeCharacterOwnerUserId;
     if (!accountId || !userId || !request.user.activeCharacterKey) {
@@ -33,9 +33,12 @@ export const requestIdentity = (request: FastifyRequest): RequestIdentity => {
     return {
       userId,
       guildId,
-      accountType: 'DEPUTY',
+      accountType: request.user.principalType === 'MEMBER_DEPUTY' ? 'MEMBER_DEPUTY' : 'DEPUTY',
       accountId,
-      accountNickname: request.user.nickname,
+      accountNickname:
+        request.user.principalType === 'MEMBER_DEPUTY'
+          ? (request.user.actorNickname ?? request.user.nickname)
+          : request.user.nickname,
       activeCharacterKey: request.user.activeCharacterKey,
       activeCharacterOwnerUserId: userId,
       activeCharacterType: request.user.activeCharacterType ?? null,
@@ -64,7 +67,7 @@ export const resolveCharacterKey = (
   identity: RequestIdentity,
   requestedCharacterKey?: string,
 ): string => {
-  if (identity.accountType === 'DEPUTY') {
+  if (identity.accountType !== 'USER') {
     if (requestedCharacterKey && requestedCharacterKey !== identity.activeCharacterKey) {
       throw new AppError(
         'DEPUTY_CHARACTER_MISMATCH',

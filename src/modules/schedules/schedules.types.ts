@@ -7,6 +7,7 @@ export interface ScheduleActor {
   nickname: string;
   isActive: boolean;
   deputyId?: number;
+  actorUserId?: number;
   actorNickname?: string;
 }
 

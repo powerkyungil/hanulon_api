@@ -315,8 +315,7 @@ export class SchedulesRepository {
           `,
         )
         .get(actor.guildId, voteKey, character.ownerUserId, character.characterType) as
-        | { found: number }
-        | undefined;
+        { found: number } | undefined;
       const joined = !existing;
       if (existing) {
         this.db
@@ -349,7 +348,7 @@ export class SchedulesRepository {
             character.characterName,
             character.characterName,
             actor.deputyId ? 'DEPUTY' : 'USER',
-            actor.deputyId ?? actor.id,
+            actor.actorUserId ?? actor.deputyId ?? actor.id,
             actor.actorNickname ?? actor.nickname,
           );
       }
@@ -416,7 +415,7 @@ export class SchedulesRepository {
       )
       .run(
         actor.guildId,
-        actor.id,
+        actor.actorUserId ?? actor.id,
         actor.deputyId ?? null,
         scheduleId,
         action,

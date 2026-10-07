@@ -136,7 +136,9 @@ export const registerBossVoteRoutes = async (
           resolveCharacterKey(identity, body.characterKey),
           identity.accountType === 'DEPUTY'
             ? { deputyId: identity.accountId, actorNickname: identity.accountNickname }
-            : undefined,
+            : identity.accountType === 'MEMBER_DEPUTY'
+              ? { actorUserId: identity.accountId, actorNickname: identity.accountNickname }
+              : undefined,
         );
         return reply.send(style === 'v1' ? success({ joined }) : { joined });
       },

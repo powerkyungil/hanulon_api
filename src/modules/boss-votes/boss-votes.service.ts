@@ -285,10 +285,12 @@ export class BossVotesService {
     boss: string,
     spawnTime: number,
     characterKey = makeCharacterKey('MAIN', userId),
-    actorContext?: { deputyId?: number; actorNickname?: string },
+    actorContext?: { deputyId?: number; actorUserId?: number; actorNickname?: string },
   ): boolean {
     const actor = { ...this.requireActiveActor(userId, guildId), ...actorContext };
-    const vote = this.getVotes(userId, guildId, characterKey).find((item) => item.voteKey === voteKey);
+    const vote = this.getVotes(userId, guildId, characterKey).find(
+      (item) => item.voteKey === voteKey,
+    );
     if (!vote || vote.boss !== boss.trim() || vote.spawnTime !== spawnTime) {
       throw new AppError('BOSS_VOTE_NOT_FOUND', '보스 투표를 찾을 수 없습니다.', 404);
     }

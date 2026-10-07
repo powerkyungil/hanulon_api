@@ -38,7 +38,7 @@ const DEPUTY_PERMISSIONS = [
 ];
 
 const accountIdentity = (request: FastifyRequest): { userId: number; guildId: number } => {
-  if (request.user.principalType === 'DEPUTY') {
+  if (request.user.principalType && request.user.principalType !== 'USER') {
     throw new AppError('FORBIDDEN', '부주 계정은 부주 계정을 관리할 수 없습니다.', 403);
   }
   const userId = Number(request.user.sub);

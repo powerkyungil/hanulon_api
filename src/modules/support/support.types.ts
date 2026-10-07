@@ -10,6 +10,7 @@ export interface SupportActor {
   role: UserRole;
   isActive: boolean;
   deputyId?: number;
+  actorUserId?: number;
   actorNickname?: string;
   characterType?: CharacterType;
 }

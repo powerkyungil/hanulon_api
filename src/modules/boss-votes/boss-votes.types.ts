@@ -8,6 +8,7 @@ export interface VoteActor {
   nickname: string;
   isActive: boolean;
   deputyId?: number;
+  actorUserId?: number;
   actorNickname?: string;
 }
 

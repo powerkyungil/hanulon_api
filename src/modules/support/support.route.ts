@@ -42,7 +42,13 @@ const actorContext = (identity: ReturnType<typeof requestIdentity>) =>
         actorNickname: identity.accountNickname,
         characterType: identity.activeCharacterType ?? 'MAIN',
       }
-    : undefined;
+    : identity.accountType === 'MEMBER_DEPUTY'
+      ? {
+          actorUserId: identity.accountId,
+          actorNickname: identity.accountNickname,
+          characterType: identity.activeCharacterType ?? 'MAIN',
+        }
+      : undefined;
 
 const toV1Request = (request: SupportRequest) => ({
   id: request.id,
@@ -144,10 +150,15 @@ export const registerSupportRoutes = async (app: FastifyInstance): Promise<void>
       async (request, reply) => {
         const identity = identityFromRequest(request);
         const body = request.body as SupportRequestBody;
-        const id = service.createRequest(identity.userId, identity.guildId, {
-          requestedTime: body.requestedTime,
-          memo: body.memo ?? '',
-        }, actorContext(identity));
+        const id = service.createRequest(
+          identity.userId,
+          identity.guildId,
+          {
+            requestedTime: body.requestedTime,
+            memo: body.memo ?? '',
+          },
+          actorContext(identity),
+        );
         return responseStyle === 'v1'
           ? reply.code(201).send(success({ id }))
           : reply.send({ success: true, id });

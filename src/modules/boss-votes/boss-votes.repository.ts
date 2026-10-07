@@ -407,8 +407,7 @@ export class BossVotesRepository {
           `,
         )
         .get(actor.guildId, voteKey, character.ownerUserId, character.characterType) as
-        | { found: number }
-        | undefined;
+        { found: number } | undefined;
       const joined = !existing;
       if (existing) {
         this.db
@@ -441,7 +440,7 @@ export class BossVotesRepository {
             character.characterName,
             character.characterName,
             actor.deputyId ? 'DEPUTY' : 'USER',
-            actor.deputyId ?? actor.id,
+            actor.actorUserId ?? actor.deputyId ?? actor.id,
             actor.actorNickname ?? actor.nickname,
           );
       }
@@ -477,7 +476,7 @@ export class BossVotesRepository {
       )
       .run(
         actor.guildId,
-        actor.id,
+        actor.actorUserId ?? actor.id,
         actor.deputyId ?? null,
         voteKey,
         action,

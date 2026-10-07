@@ -16,6 +16,7 @@ import { registerDistributionRoutes } from './modules/distributions/distribution
 import { registerGuildRoutes } from './modules/guild/guild.route';
 import { registerHealthRoutes } from './modules/health/health.route';
 import { registerMemberRoutes } from './modules/members/members.route';
+import { registerMemberDelegationRoutes } from './modules/member-delegations/member-delegations.route';
 import { registerNoticeRoutes } from './modules/notices/notices.route';
 import { registerOcrRoutes } from './modules/ocr/ocr.route';
 import { registerPushNotificationRoutes } from './modules/push-notifications/push-notifications.route';
@@ -86,6 +87,7 @@ export const buildApp = async (
   await registerDistributionRoutes(app);
   await registerGuildRoutes(app);
   await registerMemberRoutes(app);
+  await registerMemberDelegationRoutes(app);
   await registerNoticeRoutes(app);
   await registerOcrRoutes(app, config);
   await registerPushNotificationRoutes(app);

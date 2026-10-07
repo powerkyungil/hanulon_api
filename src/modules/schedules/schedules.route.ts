@@ -236,7 +236,12 @@ export const registerScheduleRoutes = async (
         const identity = identityFromRequest(request);
         const targets =
           style === 'v1'
-            ? { bossDefinitionIds: service.getTargetDefinitionIds(identity.userId, identity.guildId) }
+            ? {
+                bossDefinitionIds: service.getTargetDefinitionIds(
+                  identity.userId,
+                  identity.guildId,
+                ),
+              }
             : service.getTargetBosses(identity.userId, identity.guildId);
         return reply.send(style === 'v1' ? success(targets) : targets);
       },
@@ -250,9 +255,7 @@ export const registerScheduleRoutes = async (
       schema: {
         tags: ['schedules'],
         body:
-          style === 'v1'
-            ? v1ParticipationTargetsBodySchema
-            : legacyParticipationTargetsBodySchema,
+          style === 'v1' ? v1ParticipationTargetsBodySchema : legacyParticipationTargetsBodySchema,
         response: {
           [style === 'v1' ? 204 : 200]:
             style === 'v1' ? noContentResponseSchema : legacySuccessResponseSchema,
@@ -308,13 +311,20 @@ export const registerScheduleRoutes = async (
       handler: async (request, reply) => {
         const identity = requestIdentity(request);
         const body = request.body as ParticipationToggleBody;
-        const joined = service.toggleParticipation(identity.userId, identity.guildId, {
-          ...body,
-          characterKey: resolveCharacterKey(identity, body.characterKey),
-          boss: (request.params as ParticipantParams).boss,
-        }, identity.accountType === 'DEPUTY'
-          ? { deputyId: identity.accountId, actorNickname: identity.accountNickname }
-          : undefined);
+        const joined = service.toggleParticipation(
+          identity.userId,
+          identity.guildId,
+          {
+            ...body,
+            characterKey: resolveCharacterKey(identity, body.characterKey),
+            boss: (request.params as ParticipantParams).boss,
+          },
+          identity.accountType === 'DEPUTY'
+            ? { deputyId: identity.accountId, actorNickname: identity.accountNickname }
+            : identity.accountType === 'MEMBER_DEPUTY'
+              ? { actorUserId: identity.accountId, actorNickname: identity.accountNickname }
+              : undefined,
+        );
         return reply.send(style === 'v1' ? success({ joined }) : { joined });
       },
     });

@@ -25,7 +25,12 @@ export class SupportService {
     userId: number,
     guildId: number,
     input: SupportRequestInput,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): number {
     const actor = this.requireActiveActor(userId, guildId, actorContext);
     const normalized: SupportRequestInput = {
@@ -45,7 +50,12 @@ export class SupportService {
     guildId: number,
     requestId: number,
     status: SupportRequestStatus,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): void {
     const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
@@ -65,7 +75,12 @@ export class SupportService {
     userId: number,
     guildId: number,
     requestId: number,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): void {
     const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
@@ -78,7 +93,12 @@ export class SupportService {
     guildId: number,
     requestId: number,
     memo: string,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): number {
     const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
@@ -112,13 +132,19 @@ export class SupportService {
     guildId: number,
     requestId: number,
     applicationId: number,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): void {
     const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
     const application = this.requireApplication(guildId, requestId, applicationId);
     const deputyCharacterMismatch =
-      actor.deputyId !== undefined && application.applicantCharacterType !== actor.characterType;
+      (actor.deputyId !== undefined || actor.actorUserId !== undefined) &&
+      application.applicantCharacterType !== actor.characterType;
     if (
       (application.applicantId !== actor.id || deputyCharacterMismatch) &&
       !this.isManager(actor)
@@ -137,7 +163,12 @@ export class SupportService {
     guildId: number,
     requestId: number,
     applicationId: number,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): void {
     const actor = this.requireActiveActor(userId, guildId, actorContext);
     const request = this.requireRequest(guildId, requestId);
@@ -159,13 +190,18 @@ export class SupportService {
   private requireActiveActor(
     userId: number,
     guildId: number,
-    actorContext?: { deputyId?: number; actorNickname?: string; characterType?: CharacterType },
+    actorContext?: {
+      deputyId?: number;
+      actorUserId?: number;
+      actorNickname?: string;
+      characterType?: CharacterType;
+    },
   ): SupportActor {
     const actor = this.repository.findActor(userId, guildId);
     if (!actor || !actor.isActive) {
       throw new AppError('UNAUTHORIZED', '인증이 필요합니다.', 401);
     }
-    return actorContext?.deputyId
+    return actorContext?.deputyId || actorContext?.actorUserId
       ? { ...actor, ...actorContext, role: 'MEMBER' }
       : { ...actor, ...actorContext };
   }
@@ -192,11 +228,9 @@ export class SupportService {
 
   private requireRequestManager(actor: SupportActor, request: SupportRequestSummary): void {
     const deputyCharacterMismatch =
-      actor.deputyId !== undefined && request.requesterCharacterType !== actor.characterType;
-    if (
-      (request.requesterId !== actor.id || deputyCharacterMismatch) &&
-      !this.isManager(actor)
-    ) {
+      (actor.deputyId !== undefined || actor.actorUserId !== undefined) &&
+      request.requesterCharacterType !== actor.characterType;
+    if ((request.requesterId !== actor.id || deputyCharacterMismatch) && !this.isManager(actor)) {
       throw new AppError(
         'SUPPORT_REQUEST_MANAGE_FORBIDDEN',
         '요청자 또는 운영진만 이 작업을 수행할 수 있습니다.',
